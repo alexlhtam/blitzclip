@@ -7,7 +7,8 @@
   "engines": { "node": "22.x" },
   "scripts": {
     "dev": "BLITZCLIP_FAKE_DB=1 node test/server.js",
-    "test": "BLITZCLIP_FAKE_DB=1 node --test test/api.test.js"
+    "test": "BLITZCLIP_FAKE_DB=1 node --test test/api.test.js test/fetch-tanks.test.js",
+    "tanks": "node service/fetch-tanks.js"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.0",

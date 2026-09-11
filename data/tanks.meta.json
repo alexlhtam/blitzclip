@@ -1,0 +1,9 @@
+{
+  "game_version": "11.20.0",
+  "count": 536,
+  "requests": 1213,
+  "region": "eu",
+  "stock": false,
+  "generated_at": "2026-09-11T22:37:05.225Z",
+  "source": "https://api.wotblitz.eu/wotb/encyclopedia/"
+}

@@ -58,7 +58,7 @@ await page.fill('#tanksJson', '[{"tank_id": 9297, "name": "FV215b 183", "max_rol
 await page.click('#tanksApply');
 await page.waitForFunction(() => document.querySelector('#tanksStatus').textContent.includes('saved to your account'));
 await page.reload(); await page.waitForSelector('#signOut');
-await page.waitForFunction(() => document.querySelector('#tanksSub').textContent.includes('1 tanks'));
+await page.waitForFunction(() => document.querySelector('#tanksSub').textContent.includes('1 personal override'));
 check(true, 'tank table loaded from the account after reload');
 
 await page.screenshot({ path: 'test/tmp/library.png', fullPage: true });

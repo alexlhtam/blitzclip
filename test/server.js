@@ -25,7 +25,7 @@ export function makeServer() {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     if (!url.pathname.startsWith('/api/')) {
       const file = url.pathname === '/' || url.pathname === '/index' ? 'index.html' : url.pathname.slice(1);
-      try { const body = await readFile(join(root, file)); res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html; charset=utf-8' : 'application/octet-stream' }); res.end(body); }
+      try { const body = await readFile(join(root, file)); res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.json') ? 'application/json' : 'application/octet-stream' }); res.end(body); }
       catch { res.writeHead(404); res.end('not found'); }
       return;
     }

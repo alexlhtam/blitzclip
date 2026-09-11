@@ -171,6 +171,8 @@ h1 .sub { color: var(--accent); }
 #tanksJson { width: 100%; font: 13px/1.5 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; resize: vertical; tab-size: 2; }
 #tanksJson:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
 .tanks-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tanks-find { flex: 1 1 220px; max-width: 360px; }
+.tanks-find input { width: 100%; }
 .tanks-status { font-size: 13px; color: var(--ink-2); }
 .tanks-status.bad { color: var(--kill); }
 .tanks-status.good { color: var(--ok); }
@@ -316,12 +318,17 @@ dialog.auth .msg.ok { color: var(--ok); }
       <span class="caret">▼</span>
     </summary>
     <div class="tanks-body">
-      <p class="tanks-help">One entry per tank: WG's <code>tank_id</code>, the display <code>name</code>, and <code>max_roll</code> for each shell — the biggest damage one shot can do (Blitz rolls ±25%, so 1.25 × alpha). <strong>List shells in the tank's slot order — standard, premium, HE</strong> — because the replay records which slot fired, not the shell's name. Edit a value when a balance patch changes it, add tanks in the same shape, then Apply. Your table is kept in this browser; copy the JSON to share it.</p>
-      <textarea id="tanksJson" spellcheck="false" rows="14"></textarea>
+      <p class="tanks-help">Every tank comes from the shared table (<code>data/tanks.json</code>, built from Wargaming's encyclopedia — the same for everyone). Below are <strong>your personal overrides</strong>: entries here replace the shared entry with the same <code>tank_id</code>, or add a tank the table is missing. Each has WG's <code>tank_id</code>, the display <code>name</code>, and <code>max_roll</code> per shell — the biggest damage one shot can do (Blitz rolls ±25%, so 1.25 × alpha). <strong>List shells in the tank's slot order — standard, premium, HE</strong> — because the replay records which slot fired, not the shell's name. Pick a tank to copy its shared entry in, edit, then Apply. Overrides are kept in this browser and, when signed in, on your account.</p>
+      <div class="tanks-actions">
+        <div class="field tanks-find"><input type="text" id="tanksFind" list="tanksList" placeholder="Find a tank by name or id…" autocomplete="off"></div>
+        <datalist id="tanksList"></datalist>
+        <button class="btn" type="button" id="tanksAdd">Copy into overrides</button>
+      </div>
+      <textarea id="tanksJson" spellcheck="false" rows="10"></textarea>
       <div class="tanks-actions">
         <button class="btn primary" type="button" id="tanksApply">Apply</button>
         <button class="btn" type="button" id="tanksCopy">Copy JSON</button>
-        <button class="btn" type="button" id="tanksReset">Reset to defaults</button>
+        <button class="btn" type="button" id="tanksReset">Clear overrides</button>
         <span class="tanks-status" id="tanksStatus"></span>
       </div>
     </div>
@@ -560,7 +567,7 @@ $('account').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.id === 'signOut') {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch (err) { setAccountNote(err.message, true); return; }
-    user = null; stored.clear(); replays = []; usingExamples = true; tanks = DEFAULT_TANKS.map(t => ({ ...t })); loadLocalTanks(); $('tanksJson').value = tanksToText(tanks); tanksSummary();
+    user = null; stored.clear(); replays = []; usingExamples = true; overrides = []; loadLocalTanks(); refreshTankEditor();
     renderAccount(); setAccountNote(''); render();
   } else if (b.dataset.auth) openAuth(b.dataset.auth);
 });
@@ -611,7 +618,7 @@ async function loadLibrary() {
     // keep anything parsed this session that isn't in the library yet (e.g. dropped before signing in)
     const local = usingExamples ? [] : replays.filter(r => !r.saved && !stored.has(r.sha256));
     replays = lib.concat(local); usingExamples = false;
-    if (Array.isArray(serverTanks) && serverTanks.length) { try { tanks = validateTanks(JSON.stringify(serverTanks)); $('tanksJson').value = tanksToText(tanks); tanksSummary(); } catch (e) {} }
+    if (Array.isArray(serverTanks)) { try { overrides = cleanOverrides(validateTanks(JSON.stringify(serverTanks))); saveTanks(); refreshTankEditor(); } catch (e) {} }
     updateLibraryNote();
     // any locally parsed replays that arrived before sign-in can now be saved
     for (const r of local) saveReplay(r, pendingBytes.get(r.sha256)).then(() => { if (!r.saveError) pendingBytes.delete(r.sha256); updateLibraryNote(); });
@@ -688,8 +695,11 @@ async function saveTanksToServer(list) {
 // ---------- tank max-roll table ----------
 // max_roll per shell = floor(1.25 × alpha) (Blitz ±25% damage roll). Keys are in the
 // tank's shell-slot order: standard, premium, HE — the replay records which slot fired.
-// "check" marks alphas still to be confirmed in-game.
-const DEFAULT_TANKS = [
+// The effective table = the shared data/tanks.json (generated by service/fetch-tanks.js, the
+// same for every browser and account) with the user's personal overrides laid on top by tank_id.
+// LEGACY_TANKS is the hand-entered table from before the shared file: the fallback when the
+// file can't be fetched, and the set that old saved copies are stripped of when they load.
+const LEGACY_TANKS = [
   { tank_id: 5233,  name: "Smasher",    max_roll: { "AP": 800,  "HEAT": 681,  "HE": 1200 }, note: "640 / 545 / 960" },
   { tank_id: 10497, name: "KV-2",       max_roll: { "AP": 875,  "HEAT": 875,  "HE": 1137 }, note: "700 / 700 / 910 — check" },
   { tank_id: 2305,  name: "SU-152",     max_roll: { "AP": 875,  "HEAT": 875,  "HE": 1137 }, note: "700 / 700 / 910 — check" },
@@ -699,7 +709,39 @@ const DEFAULT_TANKS = [
   { tank_id: 14129, name: "BZT-70",     max_roll: { "AP": 1137, "HE+": 1500,  "HE": 1687 }, note: "910 / 1200 / 1350" },
   { tank_id: 9297,  name: "FV215b 183", max_roll: { "AP": 1187, "HESH": 1512, "HE": 1737 }, note: "950 / 1210 / 1390" },
 ];
-let tanks = DEFAULT_TANKS.map(t => ({ ...t }));
+let sharedTanks = [], sharedVersion = '', sharedSource = 'loading';
+let overrides = [];
+let tanks = [];
+function rebuildTanks() {
+  const byId = new Map();
+  for (const t of (sharedTanks.length ? sharedTanks : LEGACY_TANKS)) byId.set(+t.tank_id, t);
+  for (const t of overrides) byId.set(+t.tank_id, t);
+  tanks = [...byId.values()];
+}
+async function loadSharedTanks() {
+  try {
+    const res = await fetch('data/tanks.json', { cache: 'no-cache' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    sharedTanks = validateTanks(await res.text());
+    sharedSource = 'shared';
+    try { const m = await (await fetch('data/tanks.meta.json', { cache: 'no-cache' })).json(); sharedVersion = m.game_version || ''; } catch (e) {}
+  } catch (e) {
+    sharedTanks = []; sharedSource = 'fallback';
+    setTanksStatus('Shared tank table not available (' + e.message + ') — using the built-in ' + LEGACY_TANKS.length + '-tank fallback', 'bad');
+  }
+  const list = $('tanksList'); list.replaceChildren();
+  for (const t of [...(sharedTanks.length ? sharedTanks : LEGACY_TANKS)].sort((a, b) => a.name.localeCompare(b.name))) {
+    const o = document.createElement('option'); o.value = t.name; o.label = (t.tier ? 'tier ' + t.tier + ' · ' : '') + '#' + t.tank_id; list.appendChild(o);
+  }
+  rebuildTanks(); tanksSummary(); render();
+}
+// Saved lists from before the shared table were full copies of LEGACY_TANKS; keep only real changes.
+function cleanOverrides(list) {
+  const key = t => JSON.stringify({ tank_id: +t.tank_id, name: t.name, max_roll: t.max_roll, note: t.note });
+  const legacy = new Set(LEGACY_TANKS.map(key));
+  return list.filter(t => !legacy.has(key(t)));
+}
+function refreshTankEditor() { rebuildTanks(); $('tanksJson').value = tanksToText(overrides); tanksSummary(); }
 // Normalise max_roll (object keyed by shell, or a single number) to [{name, max}] in slot order.
 function shellsOf(tank) {
   const mr = tank.max_roll;
@@ -737,23 +779,50 @@ function validateTanks(text) {
   });
 }
 function tanksToText(list) {
+  if (!list.length) return '[]';
   return '[\n' + list.map(t => '  ' + JSON.stringify(t)).join(',\n') + '\n]';
 }
 function tanksSummary() {
-  $('tanksSub').textContent = tanks.length + ' tanks · ' + tanks.map(t => t.name).join(', ');
+  const src = sharedSource === 'shared' ? 'shared table' + (sharedVersion ? ' for ' + sharedVersion : '') : sharedSource === 'loading' ? 'loading shared table…' : 'built-in fallback';
+  const ov = overrides.length ? ' · ' + overrides.length + ' personal override' + (overrides.length === 1 ? '' : 's') + ' (' + overrides.map(t => t.name).join(', ') + ')' : '';
+  $('tanksSub').textContent = tanks.length + ' tanks · ' + src + ov;
 }
-function saveTanks() { try { localStorage.setItem('blitzclip.tanks', JSON.stringify(tanks)); localStorage.setItem('blitzclip.tanks.v', '2'); } catch (e) {} }
+function saveTanks() { try { localStorage.setItem('blitzclip.tanks', JSON.stringify(overrides)); localStorage.setItem('blitzclip.tanks.v', '3'); } catch (e) {} }
 function loadLocalTanks() {
-  // v1 tables had a single max_roll per tank; start those users on the per-shell defaults.
-  try { if (localStorage.getItem('blitzclip.tanks.v') === '2') { const t = JSON.parse(localStorage.getItem('blitzclip.tanks') || 'null'); if (Array.isArray(t) && t.length) tanks = validateTanks(JSON.stringify(t)); } } catch (e) {}
+  // v3 stores overrides only. v1/v2 stored a whole table (v2 = a copy of the old defaults) — drop what matches those and keep the rest as overrides.
+  try {
+    const v = localStorage.getItem('blitzclip.tanks.v');
+    const t = JSON.parse(localStorage.getItem('blitzclip.tanks') || 'null');
+    if (Array.isArray(t) && t.length) overrides = v === '3' ? validateTanks(JSON.stringify(t)) : v === '2' ? cleanOverrides(validateTanks(JSON.stringify(t))) : [];
+  } catch (e) { overrides = []; }
 }
-loadLocalTanks(); $('tanksJson').value = tanksToText(tanks); tanksSummary();
+loadLocalTanks(); refreshTankEditor(); loadSharedTanks();
 function setTanksStatus(msg, cls) { const el = $('tanksStatus'); el.textContent = msg; el.className = 'tanks-status ' + (cls || ''); }
 $('tanksApply').addEventListener('click', () => {
-  try { tanks = validateTanks($('tanksJson').value); $('tanksJson').value = tanksToText(tanks); saveTanks(); tanksSummary(); setTanksStatus('Applied — ' + tanks.length + ' tanks' + (user ? ' · saved to your account' : ''), 'good'); render(); saveTanksToServer(tanks); }
-  catch (e) { setTanksStatus(e.message, 'bad'); }
+  try {
+    const text = $('tanksJson').value.trim();
+    overrides = text ? validateTanks(text) : [];
+    saveTanks(); refreshTankEditor();
+    setTanksStatus('Applied — ' + overrides.length + ' override' + (overrides.length === 1 ? '' : 's') + ' on ' + tanks.length + ' tanks' + (user ? ' · saved to your account' : ''), 'good');
+    render(); saveTanksToServer(overrides.length ? overrides : null);
+  } catch (e) { setTanksStatus(e.message, 'bad'); }
 });
-$('tanksReset').addEventListener('click', () => { tanks = DEFAULT_TANKS.map(t => ({ ...t })); $('tanksJson').value = tanksToText(tanks); saveTanks(); tanksSummary(); setTanksStatus('Defaults restored', 'good'); render(); saveTanksToServer(null); });
+$('tanksReset').addEventListener('click', () => { overrides = []; saveTanks(); refreshTankEditor(); setTanksStatus('Overrides cleared — using the shared table as is', 'good'); render(); saveTanksToServer(null); });
+function addOverride() {
+  const q = $('tanksFind').value.trim(); if (!q) return;
+  const pool = sharedTanks.length ? sharedTanks : LEGACY_TANKS;
+  const t = pool.find(x => +x.tank_id === +q) || pool.find(x => x.name.toLowerCase() === q.toLowerCase()) || pool.find(x => x.name.toLowerCase().includes(q.toLowerCase()));
+  if (!t) { setTanksStatus('No tank called "' + q + '" in the shared table — add it by hand with its tank_id', 'bad'); return; }
+  let cur = [];
+  try { const text = $('tanksJson').value.trim(); cur = text ? JSON.parse(text) : []; if (!Array.isArray(cur)) throw new Error(); } catch (e) { setTanksStatus('Fix the JSON below first', 'bad'); return; }
+  const entry = { tank_id: t.tank_id, name: t.name, max_roll: { ...t.max_roll }, note: t.note || '' };
+  const i = cur.findIndex(x => +x.tank_id === +t.tank_id);
+  if (i >= 0) cur[i] = entry; else cur.push(entry);
+  $('tanksJson').value = tanksToText(cur); $('tanksFind').value = '';
+  setTanksStatus(t.name + ' copied in — edit it, then Apply', '');
+}
+$('tanksAdd').addEventListener('click', addOverride);
+$('tanksFind').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addOverride(); } });
 $('tanksCopy').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText($('tanksJson').value); setTanksStatus('Copied to clipboard', 'good'); }
   catch (e) { $('tanksJson').select(); setTanksStatus('Select-all and copy from the box above', ''); }
