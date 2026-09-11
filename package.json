@@ -1,0 +1,16 @@
+{
+  "name": "blitzclip",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Replay scanner and work queue for a World of Tanks Blitz YouTube channel",
+  "type": "module",
+  "engines": { "node": "22.x" },
+  "scripts": {
+    "dev": "BLITZCLIP_FAKE_DB=1 node test/server.js",
+    "test": "BLITZCLIP_FAKE_DB=1 node --test test/api.test.js"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.0",
+    "@vercel/blob": "^1.0.0"
+  }
+}

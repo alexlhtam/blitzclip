@@ -1,0 +1,92 @@
+# Blitzclip
+
+Content-sourcing tools for a World of Tanks **Blitz** YouTube channel. Drop a folder of
+`.wotbreplay` files in the browser and find the battles worth recording — and keep them.
+
+**Live:** https://blitzclip.vercel.app/
+
+## What it does — Shot Finder + library
+
+`index.html` is a single self-contained page. Replays are parsed entirely in the browser.
+
+- Drag and drop any number of `.wotbreplay` files, or a whole folder.
+- Filters: minimum single-shot damage, minimum total damage, minimum % of the shell's max roll.
+- Per replay: tank, biggest shot, when it landed (elapsed time and the 7:00 in-game countdown),
+  and an expandable shot table with shell type, % of max roll, fire damage rows, killing blows,
+  no-damage hits, and true max rolls flagged.
+- An editable per-shell tank max-roll table.
+
+Signed out, everything stays in the browser (as before). **Signed in**, every dropped replay goes
+into your library: the raw `.wotbreplay` to Vercel Blob and the parsed summary to Postgres, keyed
+by the file's SHA-256 so re-dropping the same folder is a no-op. The library loads when you open
+the page, each replay has a status (`new` → `shortlisted` → `recorded` → `published`, or
+`rejected`), the stored file can be downloaded again, and the tank table is saved to the account.
+
+Accounts are email + password (scrypt hashes; 30-day signed session cookie). Every replay belongs
+to the user who uploaded it — nothing is shared between accounts.
+
+## Layout
+
+```
+index.html              the page (parser + UI + library sync)
+api/auth/*.js           signup · login · logout · me
+api/replays/index.js    GET list · POST save a parsed summary (idempotent on sha256)
+api/replays/[id].js     GET · PATCH status/note · DELETE (also deletes the stored file)
+api/replays/upload.js   POST raw .wotbreplay through the function (≤ 4 MB)
+api/replays/client-upload.js  Blob client-upload token exchange for bigger files
+api/tanks.js            GET/PUT the per-user tank table
+lib/                    db (Neon over HTTP), auth, blob, replay validation + SQL
+schema.sql              applied lazily on first request; every statement is idempotent
+test/                   API tests (node --test), Playwright e2e, synthetic replay fixture
+```
+
+The API is plain Vercel Node functions in the Web `Request`/`Response` style with two runtime
+dependencies: `@neondatabase/serverless` and `@vercel/blob`. Vercel installs them at build time;
+there is no bundler and no framework.
+
+## Deploying (Vercel)
+
+1. **Postgres** — in the Vercel project, Storage → Create Database → **Neon**. This sets
+   `DATABASE_URL` (the code also accepts `POSTGRES_URL`). Tables are created on first request.
+2. **Blob** — Storage → Create → **Blob**. This sets `BLOB_READ_WRITE_TOKEN`. Without it the
+   page still saves parsed results and says so; files are attached later when you re-drop them.
+3. **`AUTH_SECRET`** — any long random string (e.g. `openssl rand -base64 32`), Production and
+   Preview. Sessions are signed with it.
+4. Optional **`SIGNUP_ALLOWLIST`** — comma-separated emails allowed to create accounts. Leave
+   unset while it's just you; set it before sharing the URL.
+
+Then deploy — pushes to `main` deploy production once the repo is connected to the project, or
+`vercel --prod` from a checkout.
+
+## Developing
+
+```
+npm install
+npm test          # API tests against the in-memory store (no Postgres needed)
+npm run dev       # http://localhost:3000 with the in-memory store
+BLITZCLIP_FAKE_DB=1 node test/e2e.js   # Playwright end-to-end (needs `npm i -D playwright`)
+```
+
+Set `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN` (and unset `BLITZCLIP_FAKE_DB`) to run the dev
+server against real storage.
+
+## Parsing notes
+
+The parser is a port of the verified decoding layer of `blitzparser` (Python). A `.wotbreplay`
+is a zip containing `meta.json` and a packet stream (`data.wotreplay`). Key findings, validated
+on real replays from client 11.20.0:
+
+- `meta.vehicleCompDescriptor` is Wargaming's `tank_id`.
+- HP updates (sub-type 1, 7-byte method data on the victim entity): u16 HP remaining, u32
+  attacker entity, u8 flag (1 = damage over time / fire). Summing the author's HP deltas
+  reproduces the results-screen damage exactly, fire included — this is the primary damage source.
+- Direct-hit records (sub-type 8, 33-byte payload): shooter, victim, hit type, shell id
+  (`(gun block << 2) | slot`, low two bits = shell slot), u16 damage, damage-applied flag.
+- On killing blows the recorded damage is the victim's remaining HP, so the roll was *at least*
+  the figure shown (marked ≥).
+
+## Roadmap
+
+- Notes on replays, and a queue view sorted by status for the editor.
+- Tier, damage-percentile and 1vN clutch filters (see the build plan in the project notes).
+- Private Blob access (signed URLs) if the library is ever shared beyond the owner.

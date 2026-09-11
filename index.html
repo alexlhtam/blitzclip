@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="Drop World of Tanks Blitz replays to find each battle's biggest shot, the tank, and when it landed.">
+<style>body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Blitzclip Shot Finder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<style>
+:root {
+  --bg: #F3F4F1;
+  --panel: #FFFFFF;
+  --panel-2: #EAECE7;
+  --line: #D3D7D0;
+  --ink: #1B2027;
+  --ink-2: #5C6873;
+  --muted: #8A959E;
+  --accent: #C77B12;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #F7E7CB;
+  --kill: #C2392E;
+  --kill-soft: #F6DAD6;
+  --ok: #3F8A4E;
+  --drop-line: #B9BFB6;
+  --shadow: 0 1px 2px rgba(27,32,39,.06), 0 8px 24px rgba(27,32,39,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151A1F; --panel: #1D242B; --panel-2: #232B33; --line: #313B45;
+    --ink: #EEF1F3; --ink-2: #AEB8C1; --muted: #7C8A96;
+    --accent: #E39A2E; --accent-ink: #1B1409; --accent-soft: #3A2C13;
+    --kill: #E0574A; --kill-soft: #43201C; --ok: #6DBF7C; --drop-line: #3E4953;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151A1F; --panel: #1D242B; --panel-2: #232B33; --line: #313B45;
+  --ink: #EEF1F3; --ink-2: #AEB8C1; --muted: #7C8A96;
+  --accent: #E39A2E; --accent-ink: #1B1409; --accent-soft: #3A2C13;
+  --kill: #E0574A; --kill-soft: #43201C; --ok: #6DBF7C; --drop-line: #3E4953;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: "Barlow", "Helvetica Neue", Arial, sans-serif; font-size: 15px; line-height: 1.45;
+  padding-inline: 20px; padding-block: 28px 64px;
+}
+.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 22px; }
+h1, h2, h3 { font-family: "Barlow Condensed", "Arial Narrow", Arial, sans-serif; margin: 0; text-wrap: balance; line-height: 1.05; }
+h1 { font-size: 40px; font-weight: 700; letter-spacing: .005em; }
+h1 .sub { color: var(--accent); }
+.lede { color: var(--ink-2); max-width: 62ch; margin: 6px 0 0; }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+
+/* Drop zone */
+.drop {
+  border: 2px dashed var(--drop-line); border-radius: 10px; background: var(--panel);
+  padding: 34px 20px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+  display: grid; gap: 8px; justify-items: center;
+}
+.drop:hover, .drop:focus-visible { border-color: var(--accent); outline: none; }
+.drop.over { border-color: var(--accent); background: var(--accent-soft); border-style: solid; }
+.drop .big { font-family: "Barlow Condensed", "Arial Narrow", Arial, sans-serif; font-size: 26px; font-weight: 600; }
+.drop .hint { color: var(--ink-2); font-size: 14px; }
+.drop .hint code { font-family: "Barlow", sans-serif; font-weight: 600; color: var(--ink); }
+.drop input { display: none; }
+.drop .btn { margin-top: 6px; }
+.btn {
+  font: inherit; font-weight: 600; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
+  padding: 8px 14px; border-radius: 6px; cursor: pointer;
+}
+.btn:hover { border-color: var(--muted); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+
+/* Filter strip */
+.filters {
+  display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: end;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px;
+}
+.field { display: grid; gap: 5px; }
+.field label { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
+.field input, .field select {
+  font: inherit; font-variant-numeric: tabular-nums; color: var(--ink); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; width: 150px;
+}
+.field input:focus-visible, .field select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.field .note { font-size: 12px; color: var(--muted); }
+.filters .spacer { flex: 1; }
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font-size: 12px; font-weight: 600; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink-2); cursor: pointer; font-family: inherit; }
+.chip:hover { border-color: var(--accent); color: var(--ink); }
+
+/* Summary */
+.summary { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: baseline; color: var(--ink-2); font-size: 14px; }
+.summary strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.summary .example-flag { color: var(--accent); font-weight: 600; }
+
+/* Results */
+.results { display: grid; gap: 10px; }
+.row {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+}
+.row.hit { box-shadow: var(--shadow); }
+.row.miss { opacity: .72; }
+.row.err { border-color: var(--kill); }
+.row > summary {
+  list-style: none; cursor: pointer; display: grid; gap: 4px 16px; align-items: center; padding: 12px 16px;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 110px 120px 26px;
+}
+.row > summary::-webkit-details-marker { display: none; }
+.row > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cell-tank { min-width: 0; }
+.tank { font-family: "Barlow Condensed", "Arial Narrow", Arial, sans-serif; font-size: 22px; font-weight: 600; line-height: 1.1; }
+.tank small { font-family: "Barlow", sans-serif; font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 6px; }
+.file { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta { font-size: 13px; color: var(--ink-2); min-width: 0; }
+.meta span { display: block; overflow-wrap: anywhere; }
+.dmg { font-family: "Barlow Condensed", "Arial Narrow", Arial, sans-serif; font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; text-align: right; }
+.row.hit .dmg { color: var(--accent); }
+.row.miss .dmg { color: var(--ink-2); }
+.dmg-l { display: block; font-family: "Barlow", sans-serif; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-top: 3px; }
+.time { text-align: right; font-variant-numeric: tabular-nums; }
+.time b { font-size: 18px; font-weight: 600; display: block; line-height: 1.1; }
+.time span { font-size: 12px; color: var(--muted); }
+.caret { color: var(--muted); font-size: 12px; text-align: right; transition: transform .15s; }
+.row[open] .caret { transform: rotate(180deg); }
+.badge { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; vertical-align: middle; }
+.badge.kill { background: var(--kill-soft); color: var(--kill); }
+.badge.err { background: var(--kill-soft); color: var(--kill); }
+.badge.pass { background: var(--accent-soft); color: var(--accent); }
+.err-text { color: var(--kill); font-size: 13px; }
+
+.shots { border-top: 1px solid var(--line); background: var(--panel-2); padding: 10px 16px 14px; overflow-x: auto; }
+.shots table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 14px; }
+.shots th { text-align: left; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); }
+.shots td { padding: 5px 10px 5px 0; border-bottom: 1px solid var(--line); }
+.shots tr:last-child td { border-bottom: 0; }
+.shots td.n { color: var(--muted); width: 36px; }
+.shots td.d { font-weight: 600; width: 90px; }
+.shots tr.over td.d { color: var(--accent); }
+.shots tr.top td.d { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+.shots td.t { width: 120px; }
+.shots td.k { width: 130px; }
+.shots .bar { display: inline-block; height: 8px; background: var(--accent); border-radius: 2px; vertical-align: middle; opacity: .55; }
+.shots tr.over .bar { opacity: 1; }
+.shots tr.kill .bar { background: var(--kill); }
+.shots tr.nodmg td { color: var(--muted); }
+.shots tr.nodmg td.d { font-weight: 500; }
+.badge.nodmg { background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+.badge.fire { background: var(--accent-soft); color: var(--accent); }
+.shots tr.firerow td { color: var(--ink-2); }
+.shots tr.firerow .bar { opacity: .35; }
+.shots .roll { font-size: 12px; color: var(--muted); }
+
+/* Tank table panel */
+.tanks { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.tanks > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
+.tanks > summary::-webkit-details-marker { display: none; }
+.tanks > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tanks-title { font-family: "Barlow Condensed", "Arial Narrow", Arial, sans-serif; font-size: 20px; font-weight: 600; }
+.tanks-sub { color: var(--muted); font-size: 13px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tanks[open] .caret { transform: rotate(180deg); }
+.tanks-body { border-top: 1px solid var(--line); padding: 14px 16px 16px; display: grid; gap: 12px; }
+.tanks-help { margin: 0; color: var(--ink-2); font-size: 14px; max-width: 78ch; }
+.tanks-help code { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 13px; color: var(--ink); background: var(--panel-2); padding: 1px 4px; border-radius: 3px; }
+#tanksJson { width: 100%; font: 13px/1.5 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; resize: vertical; tab-size: 2; }
+#tanksJson:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.tanks-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tanks-status { font-size: 13px; color: var(--ink-2); }
+.tanks-status.bad { color: var(--kill); }
+.tanks-status.good { color: var(--ok); }
+.pct { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pct.full { color: var(--accent); font-weight: 600; }
+.badge.max { background: var(--accent); color: var(--accent-ink); }
+.shots td.p { width: 110px; color: var(--ink-2); white-space: nowrap; }
+.shots td.s { width: 70px; color: var(--ink-2); }
+.shots tr.full td.p { color: var(--accent); font-weight: 600; }
+
+.foot { color: var(--muted); font-size: 13px; max-width: 70ch; }
+.foot b { color: var(--ink-2); font-weight: 600; }
+
+/* Account bar */
+header { display: grid; grid-template-columns: 1fr auto; gap: 8px 20px; align-items: start; }
+header .titles { grid-column: 1; }
+.account { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: end; font-size: 13px; color: var(--ink-2); }
+.account .who { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.account .btn { padding: 6px 11px; font-size: 13px; }
+.account-note { grid-column: 1 / -1; font-size: 13px; color: var(--muted); margin: 0; }
+.account-note.bad { color: var(--kill); }
+
+/* Auth dialog */
+dialog.auth { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); padding: 0; width: min(380px, calc(100vw - 32px)); box-shadow: var(--shadow); }
+dialog.auth::backdrop { background: rgba(27,32,39,.45); }
+dialog.auth form { display: grid; gap: 12px; padding: 20px 22px 22px; }
+dialog.auth h2 { font-size: 26px; }
+dialog.auth .field input { width: 100%; }
+dialog.auth .tabs { display: flex; gap: 6px; }
+dialog.auth .tabs .chip[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+dialog.auth .actions { display: flex; gap: 8px; align-items: center; justify-content: end; }
+dialog.auth .msg { font-size: 13px; color: var(--kill); min-height: 1.2em; }
+dialog.auth .msg.ok { color: var(--ok); }
+
+/* Saved-state chips and row actions */
+.badge.saved { background: var(--panel-2); color: var(--ok); border: 1px solid var(--line); }
+.badge.saving { background: var(--panel-2); color: var(--ink-2); border: 1px solid var(--line); }
+.badge.unsaved { background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.badge.failed { background: var(--kill-soft); color: var(--kill); }
+.badge.st-shortlisted { background: var(--accent-soft); color: var(--accent); }
+.badge.st-recorded, .badge.st-published { background: var(--panel-2); color: var(--ok); border: 1px solid var(--line); }
+.badge.st-rejected { background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.actions-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--panel-2); font-size: 13px; color: var(--ink-2); }
+.actions-row select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+.actions-row .btn { padding: 5px 10px; font-size: 13px; }
+.actions-row .btn.danger { color: var(--kill); }
+.actions-row a { color: var(--ink-2); }
+.actions-row .spacer { flex: 1; }
+.actions-row .when { color: var(--muted); }
+.drop.busy { border-color: var(--accent); }
+.progress { font-size: 13px; color: var(--ink-2); }
+
+@media (max-width: 640px) {
+  h1 { font-size: 32px; }
+  header { grid-template-columns: 1fr; }
+  .account { grid-column: 1; justify-content: start; }
+  .row > summary { grid-template-columns: minmax(0, 1fr) 100px 22px; grid-template-areas: "tank dmg caret" "meta time caret"; }
+  .cell-tank { grid-area: tank; } .meta { grid-area: meta; } .dmg-cell { grid-area: dmg; } .time { grid-area: time; } .caret { grid-area: caret; }
+  .field input { width: 120px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="titles">
+      <div class="eyebrow">World of Tanks Blitz · replay scanner</div>
+      <h1>Blitzclip <span class="sub">Shot Finder</span></h1>
+      <p class="lede">Drop your <strong>.wotbreplay</strong> files here to find the biggest single shot in each battle. Replays are read in your browser; sign in to keep them in your library so they're still here next time.</p>
+    </div>
+    <div class="account" id="account"></div>
+    <p class="account-note" id="accountNote" hidden></p>
+  </header>
+
+  <dialog class="auth" id="authDialog" aria-labelledby="authTitle">
+    <form id="authForm" method="dialog" novalidate>
+      <div class="tabs" role="tablist">
+        <button class="chip" type="button" role="tab" data-mode="login" aria-selected="true">Sign in</button>
+        <button class="chip" type="button" role="tab" data-mode="signup" aria-selected="false">Create account</button>
+      </div>
+      <h2 id="authTitle">Sign in</h2>
+      <div class="field"><label for="authEmail">Email</label><input id="authEmail" type="email" autocomplete="email" required></div>
+      <div class="field"><label for="authPassword">Password</label><input id="authPassword" type="password" autocomplete="current-password" minlength="8" required><div class="note" id="authPwNote">At least 8 characters</div></div>
+      <div class="msg" id="authMsg" aria-live="polite"></div>
+      <div class="actions">
+        <button class="btn" type="button" id="authCancel">Cancel</button>
+        <button class="btn primary" type="submit" id="authSubmit">Sign in</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Drop replay files or click to choose">
+    <div class="big">Drop replays here</div>
+    <div class="hint">Any number of <code>.wotbreplay</code> files, or a whole folder</div>
+    <button class="btn primary" type="button" id="pick">Choose files</button>
+    <input type="file" id="fileInput" accept=".wotbreplay,application/zip" multiple>
+    <input type="file" id="dirInput" webkitdirectory multiple>
+    <div class="hint" style="margin-top:4px"><a href="#" id="pickDir" style="color:var(--ink-2)">…or choose a folder</a></div>
+  </div>
+
+  <div class="filters">
+    <div class="field">
+      <label for="minShot">Min shot damage</label>
+      <input id="minShot" type="number" min="0" step="10" value="1000" inputmode="numeric">
+      <div class="note">Replay passes if any one shot rolls at least this</div>
+    </div>
+    <div class="field">
+      <label for="minTotal">Min total damage</label>
+      <input id="minTotal" type="number" min="0" step="100" value="0" inputmode="numeric">
+      <div class="note">0 = no total filter</div>
+    </div>
+    <div class="field">
+      <label for="show">Show</label>
+      <select id="show">
+        <option value="pass">Only replays that pass</option>
+        <option value="all">All replays</option>
+      </select>
+      <div class="note">Non-passing replays are dimmed</div>
+    </div>
+    <div class="field">
+      <label for="minPct">Min % of max roll</label>
+      <input id="minPct" type="number" min="0" max="130" step="1" value="0" inputmode="numeric">
+      <div class="note">Uses the tank table below · 0 = off</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="field">
+      <label>Quick thresholds</label>
+      <div class="chip-row" id="chips">
+        <button class="chip" type="button" data-v="750">750</button>
+        <button class="chip" type="button" data-v="1000">1000</button>
+        <button class="chip" type="button" data-v="1500">1500</button>
+        <button class="chip" type="button" data-v="1800">1800</button>
+      </div>
+    </div>
+  </div>
+
+  <details class="tanks" id="tanksPanel">
+    <summary>
+      <span class="tanks-title">Tank max rolls</span>
+      <span class="tanks-sub" id="tanksSub"></span>
+      <span class="caret">▼</span>
+    </summary>
+    <div class="tanks-body">
+      <p class="tanks-help">One entry per tank: WG's <code>tank_id</code>, the display <code>name</code>, and <code>max_roll</code> for each shell — the biggest damage one shot can do (Blitz rolls ±25%, so 1.25 × alpha). <strong>List shells in the tank's slot order — standard, premium, HE</strong> — because the replay records which slot fired, not the shell's name. Edit a value when a balance patch changes it, add tanks in the same shape, then Apply. Your table is kept in this browser; copy the JSON to share it.</p>
+      <textarea id="tanksJson" spellcheck="false" rows="14"></textarea>
+      <div class="tanks-actions">
+        <button class="btn primary" type="button" id="tanksApply">Apply</button>
+        <button class="btn" type="button" id="tanksCopy">Copy JSON</button>
+        <button class="btn" type="button" id="tanksReset">Reset to defaults</button>
+        <span class="tanks-status" id="tanksStatus"></span>
+      </div>
+    </div>
+  </details>
+
+  <div class="summary" id="summary"></div>
+  <div class="results" id="results"></div>
+
+  <p class="foot">Damage is rebuilt from the replay's HP updates, so the total matches the results screen — fire shows as its own row after the shot that lit it. On a <b>killing blow</b> the replay records only the damage applied (the target's remaining HP), so the roll was at least the figure shown (marked ≥). Time is seconds from battle start (the moment the shell landed); the second figure is the in-game countdown at that moment (7:00 clock). <b>% of max</b> compares each shot with the <code>max_roll</code> of the shell it fired, from the table above — a shot at 100% is a true max roll. The shell comes from the replay's hit records; in the rare case it isn't recorded, the shot is scored against the tightest shell it fits and marked with <b>?</b> (hover for every shell's figure). <b>No damage</b> rows are your hits that ricocheted, failed to penetrate, or were absorbed by tracks or modules — shown with the shell's listed alpha rather than a roll.</p>
+</div>
+
+<script>
+// ---------- parser (ported from the verified Python decoding layer) ----------
+const ZIP_EOCD = 0x06054b50, ZIP_CDIR = 0x02014b50, ZIP_LOCAL = 0x04034b50;
+async function inflateRaw(bytes) {
+  const ds = new DecompressionStream('deflate-raw');
+  const stream = new Blob([bytes]).stream().pipeThrough(ds);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+async function readZip(buf) {
+  const u8 = new Uint8Array(buf), dv = new DataView(buf);
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 65557); i--) if (dv.getUint32(i, true) === ZIP_EOCD) { eocd = i; break; }
+  if (eocd < 0) throw new Error('not a .wotbreplay archive');
+  const count = dv.getUint16(eocd + 10, true);
+  let pos = dv.getUint32(eocd + 16, true);
+  const entries = {}, dec = new TextDecoder();
+  for (let n = 0; n < count; n++) {
+    if (dv.getUint32(pos, true) !== ZIP_CDIR) throw new Error('corrupt archive');
+    const method = dv.getUint16(pos + 10, true), csize = dv.getUint32(pos + 20, true);
+    const nlen = dv.getUint16(pos + 28, true), elen = dv.getUint16(pos + 30, true), clen = dv.getUint16(pos + 32, true);
+    const lho = dv.getUint32(pos + 42, true);
+    entries[dec.decode(u8.subarray(pos + 46, pos + 46 + nlen))] = { method, csize, lho };
+    pos += 46 + nlen + elen + clen;
+  }
+  return {
+    async read(name) {
+      const e = entries[name]; if (!e) return null;
+      if (dv.getUint32(e.lho, true) !== ZIP_LOCAL) throw new Error('corrupt archive');
+      const start = e.lho + 30 + dv.getUint16(e.lho + 26, true) + dv.getUint16(e.lho + 28, true);
+      const data = u8.subarray(start, start + e.csize);
+      if (e.method === 0) return data;
+      if (e.method === 8) return inflateRaw(data);
+      throw new Error('unsupported compression');
+    },
+  };
+}
+function headerEnd(data) {
+  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let pos = 12;
+  for (let k = 0; k < 2; k++) { let len = data[pos]; pos += 1; if (len === 0xff) { len = dv.getUint16(pos, true); pos += 3; } pos += len; }
+  return pos + 1;
+}
+function* packets(data) {
+  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let pos = headerEnd(data);
+  while (pos + 12 <= data.length) {
+    const len = dv.getUint32(pos, true), type = dv.getUint32(pos + 4, true), clock = dv.getFloat32(pos + 8, true);
+    pos += 12; if (pos + len > data.length) break;
+    yield { type, clock, payload: data.subarray(pos, pos + len) }; pos += len;
+  }
+}
+function extractShots(data) {
+  let gameEntity = null; const events = [];
+  for (const p of packets(data)) {
+    if (p.type !== 8 || p.payload.length < 8) continue;
+    const dv = new DataView(p.payload.buffer, p.payload.byteOffset, p.payload.byteLength);
+    const entity = dv.getUint32(0, true), sub = dv.getUint32(4, true);
+    if (gameEntity === null && sub === 20) gameEntity = entity;
+    if (sub === 12 && p.payload.length >= 18) {
+      const m = p.payload.subarray(12);
+      const mdv = new DataView(m.buffer, m.byteOffset, m.byteLength);
+      // event 1 = damage dealt (cumulative u16 @4); event 3 = enemy destroyed by the author,
+      // emitted at the same clock as the damage event that killed it.
+      if (m[0] === 1 || m[0] === 3) events.push({ entity, ev: m[0], clock: p.clock, cum: mdv.getUint16(4, true) });
+    }
+  }
+  if (gameEntity === null) return [];
+  const shots = []; let prevCum = 0, pendingKill = false;
+  for (const e of events) {
+    if (e.entity !== gameEntity) continue;
+    if (e.ev === 3) { pendingKill = true; continue; }
+    const delta = e.cum - prevCum;
+    if (delta > 0) { shots.push({ clock: e.clock, damage: delta, cumulative: e.cum, kill: pendingKill }); prevCum = e.cum; }
+    pendingKill = false;
+  }
+  return shots;
+}
+// Direct-hit packets (sub_type 8, 33-byte payload): shooter, victim, ammo slot, damage.
+function extractHits(data) {
+  const hits = [];
+  for (const p of packets(data)) {
+    if (p.type !== 8 || p.payload.length !== 33) continue;
+    const dv = new DataView(p.payload.buffer, p.payload.byteOffset, p.payload.byteLength);
+    if (dv.getUint32(4, true) !== 8) continue;
+    // byte 20 = damage-applied flag; when 0 the damage field is the shell's listed alpha.
+    // byte 17 = shell id: (gun block << 2) | slot; low two bits 0/1/2 = standard/premium/HE
+    // (3 appears on some tanks — treated as unknown). Verified on FV215b 183 and BZT-70.
+    const hitType = p.payload[21], slot = p.payload[29] & 3;
+    hits.push({ clock: p.clock, shooter: dv.getUint32(12, true), victim: dv.getUint32(16, true), hitType, ammo: slot < 3 ? slot : null, damage: dv.getUint16(30, true), applied: p.payload[32] !== 0 });
+  }
+  return hits;
+}
+// HP updates (sub_type 1, 7-byte method data on the victim entity): u16 HP remaining,
+// u32 attacker, u8 flag (1 = damage over time, i.e. fire). The author's deltas sum to the
+// results-screen damage exactly, fire included.
+function extractHpUpdates(data) {
+  const out = [];
+  for (const p of packets(data)) {
+    if (p.type !== 8 || p.payload.length !== 19) continue;
+    const dv = new DataView(p.payload.buffer, p.payload.byteOffset, p.payload.byteLength);
+    if (dv.getUint32(4, true) !== 1) continue;
+    out.push({ clock: p.clock, victim: dv.getUint32(0, true), hp: dv.getUint16(12, true), attacker: dv.getUint32(14, true), dot: p.payload[18] === 1 });
+  }
+  return out;
+}
+// The author is the shooter whose applied hit damages best cover the cumulative deltas.
+function findAuthor(shots, hits) {
+  const byShooter = new Map();
+  for (const h of hits) { if (!byShooter.has(h.shooter)) byShooter.set(h.shooter, []); byShooter.get(h.shooter).push(h); }
+  let best = null, bestScore = 0;
+  for (const [shooter, list] of byShooter) {
+    const pool = list.filter(h => h.applied).map(h => h.damage); let score = 0;
+    for (const s of shots) { const i = pool.indexOf(s.damage); if (i >= 0) { score++; pool.splice(i, 1); } }
+    if (score > bestScore) { bestScore = score; best = shooter; }
+  }
+  return bestScore >= Math.max(1, Math.ceil(shots.length / 2)) ? best : null;
+}
+// Shot list from HP updates: direct hits (paired with the hit record for shell/type), fire
+// ticks grouped per victim, kills where HP reaches 0, and the author's no-damage hits.
+function shotsFromHp(hpEvents, author, hits) {
+  const hp = new Map(), rows = [], unusedHits = hits.filter(h => h.shooter === author);
+  let fire = null;
+  const closeFire = () => { if (fire) { rows.push(fire); fire = null; } };
+  for (const e of hpEvents) {
+    const prev = hp.get(e.victim); hp.set(e.victim, e.hp);
+    if (e.attacker !== author) continue;
+    if (e.dot) {
+      if (prev === undefined) continue;
+      const delta = prev - e.hp; if (delta <= 0) continue;
+      if (fire && (fire.victim !== e.victim || e.clock - fire.lastClock > 4)) closeFire();
+      if (!fire) fire = { clock: e.clock, lastClock: e.clock, victim: e.victim, damage: 0, ticks: 0, fire: true, kill: false, ammo: null, hitType: null, cumulative: null };
+      fire.damage += delta; fire.ticks += 1; fire.lastClock = e.clock; if (e.hp === 0) fire.kill = true;
+      continue;
+    }
+    closeFire();
+    let hi = -1, best = 0.5;
+    unusedHits.forEach((h, i) => { if (h.applied && h.victim === e.victim && Math.abs(h.clock - e.clock) < best) { best = Math.abs(h.clock - e.clock); hi = i; } });
+    const h = hi >= 0 ? unusedHits.splice(hi, 1)[0] : null;
+    const delta = prev !== undefined ? prev - e.hp : (h ? h.damage : 0);
+    if (delta <= 0) continue;
+    rows.push({ clock: e.clock, damage: delta, kill: e.hp === 0, ammo: h ? h.ammo : null, hitType: h ? h.hitType : null, cumulative: null, victim: e.victim });
+  }
+  closeFire();
+  for (const h of unusedHits) if (!h.applied) rows.push({ clock: h.clock, damage: 0, roll: h.damage, noDamage: true, cumulative: null, ammo: h.ammo, hitType: h.hitType, kill: false });
+  rows.sort((a, b) => a.clock - b.clock);
+  let cum = 0; for (const r of rows) { cum += r.damage; r.cumulative = cum; }
+  return rows;
+}
+// Fallback when a replay has no HP updates: pair damage deltas with the author's hit records.
+function assignAmmo(shots, hits, hpEvents) {
+  const plain = shots.map(s => ({ ...s, ammo: null }));
+  if (!shots.length || !hits.length) return plain;
+  const author = findAuthor(shots, hits);
+  if (author === null) return plain;
+  if (hpEvents && hpEvents.some(e => e.attacker === author)) return shotsFromHp(hpEvents, author, hits);
+  const unused = hits.filter(h => h.shooter === author);
+  const out = shots.map(s => {
+    const i = unused.findIndex(h => h.applied && h.damage === s.damage);
+    if (i < 0) return { ...s, ammo: null };
+    const [h] = unused.splice(i, 1);
+    return { ...s, clock: h.clock, ammo: h.ammo, hitType: h.hitType };
+  });
+  for (const h of unused) if (!h.applied) out.push({ clock: h.clock, damage: 0, roll: h.damage, noDamage: true, cumulative: null, ammo: h.ammo, hitType: h.hitType, kill: false });
+  return out.sort((a, b) => a.clock - b.clock);
+}
+function prettyVehicle(code) { return code ? code.replace(/^[A-Za-z]{1,3}\d{1,4}_/, '').replace(/_/g, ' ') : ''; }
+async function parseReplay(name, buf) {
+  const zip = await readZip(buf);
+  const out = { file: name, vehicle: '', vehicleCode: '', map: '', player: '', duration: 0, tankId: 0, shots: [], error: null };
+  const metaBytes = await zip.read('meta.json');
+  if (metaBytes) {
+    try {
+      const meta = JSON.parse(new TextDecoder().decode(metaBytes));
+      const key = Object.keys(meta).find(k => k.toLowerCase() === 'playervehiclename');
+      out.vehicleCode = key ? String(meta[key]) : '';
+      out.vehicle = prettyVehicle(out.vehicleCode) || (meta.vehicleCompDescriptor ? 'tank #' + meta.vehicleCompDescriptor : 'unknown tank');
+      out.tankId = +meta.vehicleCompDescriptor || 0;
+      out.map = meta.mapName || ''; out.player = meta.playerName || ''; out.duration = +meta.battleDuration || 0;
+    } catch (e) { out.error = 'meta.json unreadable'; }
+  }
+  const stream = await zip.read('data.wotreplay');
+  if (!stream) { out.error = 'no battle data inside the archive'; return out; }
+  out.shots = assignAmmo(extractShots(stream), extractHits(stream), extractHpUpdates(stream));
+  if (!out.shots.length) out.error = out.error || 'no damage events found in this replay';
+  return out;
+}
+
+// ---------- app ----------
+const $ = id => document.getElementById(id);
+const drop = $('drop'), fileInput = $('fileInput'), dirInput = $('dirInput');
+const minShot = $('minShot'), minTotal = $('minTotal'), showSel = $('show');
+const BATTLE_SECS = 420;
+const PARSER_VERSION = '0.2.0';
+
+// ---------- account + server library ----------
+// The page works signed-out exactly as before (everything stays in this browser). Signed in,
+// every dropped replay is uploaded to your library: the raw file to Blob storage and the parsed
+// summary to Postgres, keyed by the file's SHA-256 so re-dropping a folder is a no-op.
+const SERVER_UPLOAD_LIMIT = 4 * 1024 * 1024;
+const STATUSES = ['new', 'shortlisted', 'recorded', 'published', 'rejected'];
+let user = null, blobEnabled = false, serverAvailable = true;
+const stored = new Map(); // sha256 → replay object already in the library
+const pendingBytes = new Map(); // sha256 → ArrayBuffer of replays dropped this session (for sign-in-later and Retry)
+
+async function api(path, { method = 'GET', body, raw, headers = {} } = {}) {
+  const h = { ...headers };
+  let payload = raw;
+  if (body !== undefined) { h['content-type'] = 'application/json'; payload = JSON.stringify(body); }
+  let res;
+  try { res = await fetch(path, { method, headers: h, body: payload, credentials: 'same-origin' }); }
+  catch (e) { throw new Error('Network error — ' + e.message); }
+  let data = null; try { data = await res.json(); } catch (e) {}
+  if (!res.ok) { const err = new Error((data && data.error) || `${res.status} ${res.statusText}`); err.status = res.status; err.data = data; throw err; }
+  return data;
+}
+
+function setAccountNote(msg, bad) { const el = $('accountNote'); el.textContent = msg || ''; el.hidden = !msg; el.className = 'account-note' + (bad ? ' bad' : ''); }
+function renderAccount() {
+  const el = $('account');
+  if (!serverAvailable) { el.innerHTML = '<span>Library unavailable</span>'; return; }
+  if (user) el.innerHTML = `<span>Signed in as</span> <span class="who">${esc(user.email)}</span> <button class="btn" type="button" id="signOut">Sign out</button>`;
+  else el.innerHTML = `<button class="btn" type="button" data-auth="login">Sign in</button> <button class="btn primary" type="button" data-auth="signup">Create account</button>`;
+}
+$('account').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.id === 'signOut') {
+    try { await api('/api/auth/logout', { method: 'POST' }); } catch (err) { setAccountNote(err.message, true); return; }
+    user = null; stored.clear(); replays = []; usingExamples = true; tanks = DEFAULT_TANKS.map(t => ({ ...t })); loadLocalTanks(); $('tanksJson').value = tanksToText(tanks); tanksSummary();
+    renderAccount(); setAccountNote(''); render();
+  } else if (b.dataset.auth) openAuth(b.dataset.auth);
+});
+
+// Sign-in / create-account dialog
+const authDialog = $('authDialog'), authForm = $('authForm');
+let authMode = 'login';
+function setAuthMode(mode) {
+  authMode = mode;
+  authDialog.querySelectorAll('[role="tab"]').forEach(t => t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
+  $('authTitle').textContent = mode === 'login' ? 'Sign in' : 'Create account';
+  $('authSubmit').textContent = mode === 'login' ? 'Sign in' : 'Create account';
+  $('authPassword').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+  $('authPwNote').hidden = mode === 'login';
+  $('authMsg').textContent = ''; $('authMsg').className = 'msg';
+}
+function openAuth(mode) { setAuthMode(mode); authDialog.showModal(); $('authEmail').focus(); }
+authDialog.querySelector('.tabs').addEventListener('click', e => { const t = e.target.closest('[role="tab"]'); if (t) setAuthMode(t.dataset.mode); });
+$('authCancel').addEventListener('click', () => authDialog.close());
+authForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  const email = $('authEmail').value.trim(), password = $('authPassword').value;
+  const msg = $('authMsg'); msg.className = 'msg';
+  if (!email || !password) { msg.textContent = 'Enter your email and password.'; return; }
+  if (authMode === 'signup' && password.length < 8) { msg.textContent = 'Password must be at least 8 characters.'; return; }
+  $('authSubmit').disabled = true; msg.textContent = authMode === 'login' ? 'Signing in…' : 'Creating account…';
+  try {
+    const data = await api(authMode === 'login' ? '/api/auth/login' : '/api/auth/signup', { method: 'POST', body: { email, password } });
+    user = data.user; $('authPassword').value = ''; authDialog.close(); renderAccount();
+    await loadLibrary();
+  } catch (err) { msg.textContent = err.message; }
+  finally { $('authSubmit').disabled = false; }
+});
+
+// Library rows ↔ page replay objects
+function rowToReplay(row) {
+  return { id: row.id, sha256: row.sha256, file: row.file_name, fileSize: row.file_size, vehicle: row.vehicle || '', vehicleCode: row.vehicle_code || '', tankId: row.tank_id || 0,
+    map: row.map || '', player: row.player || '', duration: row.duration || 0, shots: Array.isArray(row.shots) ? row.shots : [], error: row.error || null,
+    status: row.status || 'new', note: row.note || '', blobUrl: row.blob_url || null, createdAt: row.created_at, battleTime: row.battle_time, saved: true };
+}
+async function loadLibrary() {
+  setAccountNote('Loading your library…');
+  try {
+    const [{ replays: rows }, { tanks: serverTanks }] = await Promise.all([api('/api/replays'), api('/api/tanks')]);
+    stored.clear();
+    const lib = rows.map(rowToReplay);
+    for (const r of lib) stored.set(r.sha256, r);
+    // keep anything parsed this session that isn't in the library yet (e.g. dropped before signing in)
+    const local = usingExamples ? [] : replays.filter(r => !r.saved && !stored.has(r.sha256));
+    replays = lib.concat(local); usingExamples = false;
+    if (Array.isArray(serverTanks) && serverTanks.length) { try { tanks = validateTanks(JSON.stringify(serverTanks)); $('tanksJson').value = tanksToText(tanks); tanksSummary(); } catch (e) {} }
+    updateLibraryNote();
+    // any locally parsed replays that arrived before sign-in can now be saved
+    for (const r of local) saveReplay(r, pendingBytes.get(r.sha256)).then(() => { if (!r.saveError) pendingBytes.delete(r.sha256); updateLibraryNote(); });
+  } catch (err) { setAccountNote('Could not load your library: ' + err.message, true); }
+  render();
+}
+function updateLibraryNote() {
+  if (!user) return;
+  const n = stored.size;
+  if (!blobEnabled) setAccountNote('Replay files are not being stored yet (no Blob store configured) — parsed results still are.', true);
+  else setAccountNote(n ? `${n} replay${n === 1 ? '' : 's'} in your library.` : 'Your library is empty — drop replays to add them.');
+}
+async function boot() {
+  try {
+    const me = await api('/api/auth/me');
+    user = me.user; blobEnabled = !!me.blob;
+    renderAccount();
+    if (user) await loadLibrary();
+  } catch (err) {
+    if (err.status === 503) { serverAvailable = false; renderAccount(); setAccountNote(err.message, true); }
+    else { renderAccount(); setAccountNote('Could not reach the server — working in this browser only. ' + err.message, true); }
+  }
+}
+
+async function sha256Hex(buf) {
+  const d = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+// Upload the raw replay: through the API for normal sizes, straight to Blob storage for big ones.
+async function uploadReplayFile(r, bytes) {
+  if (!blobEnabled) return null;
+  if (bytes.byteLength <= SERVER_UPLOAD_LIMIT) {
+    const res = await api('/api/replays/upload', { method: 'POST', raw: bytes, headers: { 'content-type': 'application/octet-stream', 'x-file-sha256': r.sha256 } });
+    return { url: res.url, pathname: res.pathname };
+  }
+  const pathname = `replays/${user.id}/${r.sha256}.wotbreplay`;
+  const tok = await api('/api/replays/client-upload', { method: 'POST', body: { type: 'blob.generate-client-token', payload: { pathname, callbackUrl: new URL('/api/replays/client-upload', location.href).href, clientPayload: null, multipart: false } } });
+  const put = await fetch(`https://blob.vercel-storage.com/${pathname}`, { method: 'PUT', body: bytes, headers: { authorization: `Bearer ${tok.clientToken}`, 'x-api-version': '7', 'x-content-type': 'application/zip', 'x-add-random-suffix': '1' } });
+  if (!put.ok) throw new Error(`Blob upload failed (${put.status})`);
+  const blob = await put.json();
+  return { url: blob.url, pathname: blob.pathname };
+}
+async function saveReplay(r, bytes) {
+  if (!user) return;
+  r.saving = true; r.saveError = null; render();
+  try {
+    let blob = null;
+    if (bytes) { try { blob = await uploadReplayFile(r, bytes); } catch (e) { r.fileError = e.message; } }
+    const res = await api('/api/replays', { method: 'POST', body: { sha256: r.sha256, file_name: r.file, file_size: r.fileSize || (bytes ? bytes.byteLength : 0), blob_url: blob && blob.url, blob_pathname: blob && blob.pathname, parser_version: PARSER_VERSION,
+      parsed: { tankId: r.tankId, vehicleCode: r.vehicleCode, vehicle: r.vehicle, map: r.map, player: r.player, duration: r.duration, shots: r.shots, error: r.error } } });
+    const savedRow = rowToReplay(res.replay);
+    Object.assign(r, { id: savedRow.id, status: savedRow.status, note: savedRow.note, blobUrl: savedRow.blobUrl, createdAt: savedRow.createdAt, saved: true, existing: res.existing });
+    stored.set(r.sha256, r);
+  } catch (e) { r.saveError = e.message; }
+  r.saving = false; updateLibraryNote(); render();
+}
+async function setStatus(r, status) {
+  const prev = r.status; r.status = status; render();
+  try { const res = await api(`/api/replays/${r.id}`, { method: 'PATCH', body: { status } }); r.status = res.replay.status; }
+  catch (e) { r.status = prev; setAccountNote('Could not update: ' + e.message, true); }
+  render();
+}
+async function removeReplay(r) {
+  try { await api(`/api/replays/${r.id}`, { method: 'DELETE' }); stored.delete(r.sha256); replays = replays.filter(x => x !== r); }
+  catch (e) { setAccountNote('Could not delete: ' + e.message, true); }
+  render();
+}
+async function saveTanksToServer(list) {
+  if (!user) return;
+  try { await api('/api/tanks', { method: 'PUT', body: { tanks: list } }); }
+  catch (e) { setTanksStatus('Saved in this browser, but not to your account: ' + e.message, 'bad'); }
+}
+
+// ---------- tank max-roll table ----------
+// max_roll per shell = floor(1.25 × alpha) (Blitz ±25% damage roll). Keys are in the
+// tank's shell-slot order: standard, premium, HE — the replay records which slot fired.
+// "check" marks alphas still to be confirmed in-game.
+const DEFAULT_TANKS = [
+  { tank_id: 5233,  name: "Smasher",    max_roll: { "AP": 800,  "HEAT": 681,  "HE": 1200 }, note: "640 / 545 / 960" },
+  { tank_id: 10497, name: "KV-2",       max_roll: { "AP": 875,  "HEAT": 875,  "HE": 1137 }, note: "700 / 700 / 910 — check" },
+  { tank_id: 2305,  name: "SU-152",     max_roll: { "AP": 875,  "HEAT": 875,  "HE": 1137 }, note: "700 / 700 / 910 — check" },
+  { tank_id: 7425,  name: "ISU-152",    max_roll: { "AP": 937,  "APCR": 937,  "HE": 1187 }, note: "BL-10 750 / 750 / 950 — check" },
+  { tank_id: 8193,  name: "Object 704", max_roll: { "AP": 937,  "APCR": 937,  "HE": 1187 }, note: "BL-10 750 / 750 / 950 — check" },
+  { tank_id: 9489,  name: "E 100",      max_roll: { "AP": 937,  "HEAT": 937,  "HE": 1187 }, note: "15 cm 750 / 750 / 950 — check" },
+  { tank_id: 14129, name: "BZT-70",     max_roll: { "AP": 1137, "HE+": 1500,  "HE": 1687 }, note: "910 / 1200 / 1350" },
+  { tank_id: 9297,  name: "FV215b 183", max_roll: { "AP": 1187, "HESH": 1512, "HE": 1737 }, note: "950 / 1210 / 1390" },
+];
+let tanks = DEFAULT_TANKS.map(t => ({ ...t }));
+// Normalise max_roll (object keyed by shell, or a single number) to [{name, max}] in slot order.
+function shellsOf(tank) {
+  const mr = tank.max_roll;
+  if (typeof mr === 'number') return [{ name: '', max: mr }];
+  return Object.entries(mr).map(([name, max]) => ({ name, max: Number(max) }));
+}
+const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function findTank(r) {
+  if (r.tankId) { const byId = tanks.find(t => +t.tank_id === +r.tankId); if (byId) return byId; }
+  const code = norm(r.vehicleCode);
+  if (!code) return null;
+  // match the display name against the replay's internal vehicle code, e.g. "R77_KV2" ~ "KV-2"
+  const hits = tanks.filter(t => { const n = norm(t.name); return n && code.endsWith(n); });
+  return hits.sort((a, b) => norm(b.name).length - norm(a.name).length)[0] || null;
+}
+function validateTanks(text) {
+  let arr;
+  try { arr = JSON.parse(text); } catch (e) { throw new Error('Not valid JSON: ' + e.message.replace(/^JSON\.parse: /, '')); }
+  if (!Array.isArray(arr)) throw new Error('Expected a JSON array of tanks');
+  return arr.map((t, i) => {
+    if (!t || typeof t !== 'object') throw new Error(`Entry ${i + 1} is not an object`);
+    const id = Number(t.tank_id);
+    if (!Number.isInteger(id) || id <= 0) throw new Error(`Entry ${i + 1}: tank_id must be a positive whole number`);
+    if (!t.name || typeof t.name !== 'string') throw new Error(`Entry ${i + 1}: name is required`);
+    let mr = t.max_roll;
+    if (typeof mr === 'number' || typeof mr === 'string') { mr = Number(mr); if (!(mr > 0)) throw new Error(`Entry ${i + 1} (${t.name}): max_roll must be a positive number`); }
+    else if (mr && typeof mr === 'object' && !Array.isArray(mr)) {
+      const keys = Object.keys(mr);
+      if (!keys.length) throw new Error(`Entry ${i + 1} (${t.name}): max_roll needs at least one shell`);
+      const clean = {};
+      for (const k of keys) { const v = Number(mr[k]); if (!(v > 0)) throw new Error(`Entry ${i + 1} (${t.name}): max_roll.${k} must be a positive number`); clean[k.trim()] = v; }
+      mr = clean;
+    } else throw new Error(`Entry ${i + 1} (${t.name}): max_roll must be a number or an object like {"AP": 937, "HEAT": 937, "HE": 1187}`);
+    return { ...t, tank_id: id, name: t.name.trim(), max_roll: mr };
+  });
+}
+function tanksToText(list) {
+  return '[\n' + list.map(t => '  ' + JSON.stringify(t)).join(',\n') + '\n]';
+}
+function tanksSummary() {
+  $('tanksSub').textContent = tanks.length + ' tanks · ' + tanks.map(t => t.name).join(', ');
+}
+function saveTanks() { try { localStorage.setItem('blitzclip.tanks', JSON.stringify(tanks)); localStorage.setItem('blitzclip.tanks.v', '2'); } catch (e) {} }
+function loadLocalTanks() {
+  // v1 tables had a single max_roll per tank; start those users on the per-shell defaults.
+  try { if (localStorage.getItem('blitzclip.tanks.v') === '2') { const t = JSON.parse(localStorage.getItem('blitzclip.tanks') || 'null'); if (Array.isArray(t) && t.length) tanks = validateTanks(JSON.stringify(t)); } } catch (e) {}
+}
+loadLocalTanks(); $('tanksJson').value = tanksToText(tanks); tanksSummary();
+function setTanksStatus(msg, cls) { const el = $('tanksStatus'); el.textContent = msg; el.className = 'tanks-status ' + (cls || ''); }
+$('tanksApply').addEventListener('click', () => {
+  try { tanks = validateTanks($('tanksJson').value); $('tanksJson').value = tanksToText(tanks); saveTanks(); tanksSummary(); setTanksStatus('Applied — ' + tanks.length + ' tanks' + (user ? ' · saved to your account' : ''), 'good'); render(); saveTanksToServer(tanks); }
+  catch (e) { setTanksStatus(e.message, 'bad'); }
+});
+$('tanksReset').addEventListener('click', () => { tanks = DEFAULT_TANKS.map(t => ({ ...t })); $('tanksJson').value = tanksToText(tanks); saveTanks(); tanksSummary(); setTanksStatus('Defaults restored', 'good'); render(); saveTanksToServer(null); });
+$('tanksCopy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('tanksJson').value); setTanksStatus('Copied to clipboard', 'good'); }
+  catch (e) { $('tanksJson').select(); setTanksStatus('Select-all and copy from the box above', ''); }
+});
+
+const EXAMPLES = [
+  { file: 'example_20260905_1913_R77_KV2.wotbreplay', vehicle: 'KV2', vehicleCode: 'R77_KV2', tankId: 10497, map: 'himmelsdorf', player: 'example', duration: 331.4, error: null,
+    shots: [{clock:41.2,damage:812,cumulative:812,ammo:2,hitType:3},{clock:88.9,damage:875,cumulative:1687,ammo:0,hitType:3},{clock:130.5,damage:1137,cumulative:2824,ammo:2,hitType:3},{clock:171.0,damage:1032,cumulative:3856,ammo:2,hitType:3},{clock:214.7,damage:871,cumulative:4727,ammo:2,hitType:3}] },
+  { file: 'example_20260910_1644_Ch57_BZT_70.wotbreplay', vehicle: 'BZT 70', vehicleCode: 'Ch57_BZT_70', tankId: 14129, map: 'milbase', player: 'example', duration: 190.2, error: null,
+    shots: [{clock:60.6,damage:834,cumulative:834,ammo:0,hitType:4},{clock:61.1,damage:185,cumulative:1019,fire:true,ticks:3,ammo:null,hitType:null},{clock:87.2,damage:981,cumulative:2000,ammo:1,hitType:3,kill:true},{clock:111.9,damage:1222,cumulative:3222,ammo:1,hitType:3,kill:true},{clock:159.0,damage:1500,cumulative:4722,ammo:1,hitType:3}] },
+  { file: 'example_20260911_1225_GB48_FV215b_183.wotbreplay', vehicle: 'FV215b 183', vehicleCode: 'GB48_FV215b_183', tankId: 9297, map: 'rock', player: 'example', duration: 254.8, error: null,
+    shots: [{clock:53.9,damage:1204,cumulative:1204,ammo:1,hitType:3},{clock:108.1,damage:344,cumulative:1548,ammo:1,hitType:4},{clock:194.0,damage:0,roll:950,noDamage:true,cumulative:null,ammo:0,hitType:4}] },
+];
+let replays = [];
+let usingExamples = true;
+
+function fmtClock(s) { const m = Math.floor(s / 60), r = s - m * 60; return m + ':' + (r < 10 ? '0' : '') + r.toFixed(1); }
+function fmtCountdown(s) { const left = Math.max(0, BATTLE_SECS - s); const m = Math.floor(left / 60), r = Math.floor(left % 60); return m + ':' + (r < 10 ? '0' : '') + r; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+const minPct = $('minPct');
+function evaluate(r) {
+  const ms = +minShot.value || 0, mt = +minTotal.value || 0, mp = +minPct.value || 0;
+  const damaging = r.shots.filter(s => s.damage > 0 && !s.fire);
+  const total = r.shots.length ? Math.max(...r.shots.map(s => s.cumulative || 0)) : 0;
+  let max = null;
+  for (const s of damaging) if (!max || s.damage > max.damage) max = s;
+  const tank = findTank(r);
+  const shells = tank ? shellsOf(tank) : [];
+  const isHE = sh => /HE/i.test(sh.name);
+  // Which shell to score a shot against: the slot the replay recorded if we have it;
+  // otherwise the tightest shell the shot fits (unknown → flagged). A splash (type-4 hit
+  // that applied damage) can only come from an HE-family shell, so restrict to those.
+  const pctOf = s => {
+    if (!shells.length || !(s.damage > 0) || s.fire) return null;
+    let shell = null, known = false;
+    if (Number.isInteger(s.ammo) && shells[s.ammo]) { shell = shells[s.ammo]; known = true; }
+    else {
+      let cands = shells;
+      if (s.hitType === 4 && shells.some(isHE)) cands = shells.filter(isHE);
+      const asc = cands.slice().sort((a, b) => a.max - b.max);
+      shell = asc.find(sh => sh.max >= s.damage) || asc[asc.length - 1];
+    }
+    return { pct: 100 * s.damage / shell.max, shell: shell.name, known, atLeast: !!s.kill, all: shells.map(sh => ({ name: sh.name, pct: 100 * s.damage / sh.max })) };
+  };
+  let maxPct = null, top = null;
+  for (const s of damaging) { const p = pctOf(s); if (p && (maxPct === null || p.pct > maxPct)) { maxPct = p.pct; top = s; } }
+  let pass = !r.error && !!max && max.damage >= ms && total >= mt;
+  if (mp > 0) pass = pass && maxPct !== null && maxPct >= mp;
+  return { max, top, total, pass, ms, mp, tank, shells, pctOf, maxPct };
+}
+const fmtPct = p => p === null ? '' : Math.round(p) + '%';
+const isFull = p => p !== null && p >= 99.5;
+const AMMO_SLOT = ['standard', 'premium', 'HE'];
+const HIT_TYPE = { 0: 'no damage', 1: 'ricochet', 2: 'non-penetration', 3: 'penetration', 4: 'module / tracks' };
+function pctLabel(p) {
+  if (!p) return '';
+  const name = p.shell ? esc(p.shell) : '', ge = p.atLeast ? '≥' : '';
+  if (p.known || p.all.length === 1) return `${ge}${fmtPct(p.pct)}${name ? ' ' + name : ''}`;
+  return `${ge}${fmtPct(p.pct)} ${name}?`;
+}
+function pctTitle(p) {
+  if (!p) return '';
+  const parts = [];
+  if (p.atLeast) parts.push('Killing blow: the replay records the damage applied (the target\'s remaining HP), so the roll was at least this');
+  if (!p.known && p.all.length > 1) parts.push('Shell not identified in this replay — ' + p.all.map(a => `${a.name}: ${fmtPct(a.pct)}`).join(', '));
+  return parts.join('. ');
+}
+
+function renderList() {
+  const list = usingExamples ? EXAMPLES : replays;
+  const evald = list.map(r => ({ r, ...evaluate(r) }));
+  const passing = evald.filter(e => e.pass).length;
+  const errors = evald.filter(e => e.r.error).length;
+  const s = $('summary');
+  const saving = list.filter(r => r.saving).length;
+  s.innerHTML = (usingExamples ? '<span class="example-flag">Example rows — drop your own replays to replace them.</span> ' : '') +
+    (ingestNote && !usingExamples ? `<span class="progress">${esc(ingestNote)}${saving ? ` · saving ${saving}…` : ''}</span>` : '') +
+    `<span><strong>${passing}</strong> of <strong>${list.length}</strong> replays pass</span>` +
+    (errors ? `<span><strong>${errors}</strong> could not be read</span>` : '') +
+    `<span>threshold <strong>${(+minShot.value || 0).toLocaleString()}</strong> dmg per shot${+minTotal.value > 0 ? `, <strong>${(+minTotal.value).toLocaleString()}</strong> total` : ''}${+minPct.value > 0 ? `, <strong>${+minPct.value}%</strong> of max roll` : ''}</span>` +
+    (+minPct.value > 0 && evald.some(e => !e.tank && !e.r.error) ? `<span><strong>${evald.filter(e => !e.tank && !e.r.error).length}</strong> not in the tank table (can't pass a % filter)</span>` : '');
+
+  const onlyPass = showSel.value === 'pass';
+  const rows = evald.filter(e => !onlyPass || e.pass || e.r.error)
+    .sort((a, b) => (b.max ? b.max.damage : -1) - (a.max ? a.max.damage : -1));
+  const out = $('results');
+  if (!rows.length) { out.innerHTML = `<div class="row" style="padding:18px 16px;color:var(--ink-2)">${list.length ? 'No replay has a shot at or above this threshold. Lower it, or switch to “All replays”.' : 'No replays loaded yet.'}</div>`; return; }
+  out.innerHTML = rows.map(({ r, max, top, total, pass, ms, tank, shells, pctOf, maxPct }) => {
+    const cls = r.error ? 'err' : (pass ? 'hit' : 'miss');
+    const topP = top ? pctOf(top) : null;
+    const shotsHtml = r.shots.length ? `<div class="shots"><table><thead><tr><th>#</th><th>Damage</th><th>Shell</th>${tank ? '<th>% of max</th>' : ''}<th>Time</th><th>Timer</th><th>Note</th><th></th></tr></thead><tbody>` +
+      r.shots.map((s, i) => { const p = pctOf(s); const full = isFull(p ? p.pct : null); const shellName = s.fire ? 'fire' : Number.isInteger(s.ammo) ? ((shells[s.ammo] && shells[s.ammo].name) || AMMO_SLOT[s.ammo] || 'slot ' + s.ammo) : (s.hitType === 4 && s.damage > 0 ? 'splash' : '—');
+        const note = s.noDamage ? `<span class="badge nodmg">No damage</span> <span class="roll">${HIT_TYPE[s.hitType] || 'absorbed'} · shell ${s.roll.toLocaleString()}</span>` : s.fire ? `<span class="badge fire">Fire</span> <span class="roll">${s.ticks} tick${s.ticks > 1 ? 's' : ''}</span> ${s.kill ? '<span class="badge kill">Burned out</span>' : ''}` : `${full ? '<span class="badge max">Max roll</span> ' : ''}${s.kill ? '<span class="badge kill">Killing blow</span>' : ''}`;
+        return `<tr class="${s.damage >= ms && s.damage > 0 && !s.fire ? 'over' : ''} ${s === max ? 'top' : ''} ${s.noDamage ? 'nodmg' : ''} ${s.fire ? 'firerow' : ''} ${s.kill ? 'kill' : ''} ${full ? 'full' : ''}">
+        <td class="n">${i + 1}</td><td class="d">${s.noDamage ? '0' : s.damage.toLocaleString()}</td><td class="s">${esc(shellName)}</td>${tank ? `<td class="p" title="${esc(pctTitle(p))}">${pctLabel(p)}</td>` : ''}<td class="t">${fmtClock(s.clock)}</td><td class="t">${fmtCountdown(s.clock)}</td>
+        <td class="k">${note}</td>
+        <td>${max && s.damage > 0 ? `<span class="bar" style="width:${Math.round(100 * Math.min(s.damage, max.damage) / max.damage)}px"></span>` : ''}</td></tr>`; }).join('') +
+      `</tbody></table></div>` : '';
+    const key = r.sha256 || r.file;
+    let state = '';
+    if (r.saving) state = '<span class="badge saving">Saving…</span>';
+    else if (r.saveError) state = `<span class="badge failed" title="${esc(r.saveError)}">Not saved</span>`;
+    else if (r.saved && r.status && r.status !== 'new') state = `<span class="badge st-${esc(r.status)}">${esc(r.status)}</span>`;
+    else if (r.saved) state = '<span class="badge saved">Saved</span>';
+    else if (user && !usingExamples) state = '<span class="badge unsaved">Not saved</span>';
+    const actions = (r.saved || r.saveError) && user && !usingExamples ? `<div class="actions-row" data-key="${esc(key)}">
+        ${r.saved ? `<label>Status <select data-act="status">${STATUSES.map(s => `<option value="${s}" ${s === r.status ? 'selected' : ''}>${s}</option>`).join('')}</select></label>` : ''}
+        ${r.blobUrl ? `<a href="${esc(r.blobUrl)}" download="${esc(r.file)}">Download replay</a>` : (r.saved ? `<span title="${esc(r.fileError || 'The replay file was not stored, only the parsed result.')}">file not stored</span>` : '')}
+        ${r.saveError ? `<span class="err-text">${esc(r.saveError)}</span> <button class="btn" type="button" data-act="retry">Retry</button>` : ''}
+        <span class="spacer"></span>
+        ${r.createdAt ? `<span class="when">added ${new Date(r.createdAt).toLocaleDateString()}</span>` : ''}
+        ${r.saved ? '<button class="btn danger" type="button" data-act="delete">Delete</button>' : ''}
+      </div>` : '';
+    return `<details class="row ${cls}" data-key="${esc(key)}">
+      <summary>
+        <div class="cell-tank"><div class="tank">${esc(tank ? tank.name : r.vehicle)}${r.vehicleCode ? `<small>${esc(r.vehicleCode)}${r.tankId ? ' · #' + r.tankId : ''}</small>` : ''}</div><div class="file" title="${esc(r.file)}">${esc(r.file)} ${state}</div></div>
+        <div class="meta">${r.error ? `<span class="err-text">${esc(r.error)}</span>` : `<span>${esc(r.map || '—')}${r.player ? ' · ' + esc(r.player) : ''}</span><span>${r.shots.filter(s => s.damage > 0 && !s.fire).length} damaging hits${r.shots.some(s => s.noDamage) ? ` + ${r.shots.filter(s => s.noDamage).length} no-damage` : ''} · ${total.toLocaleString()} total${r.shots.some(s => s.fire) ? ` (${r.shots.filter(s => s.fire).reduce((a, s) => a + s.damage, 0).toLocaleString()} fire)` : ''}${r.shots.filter(s => s.kill).length ? ` · ${r.shots.filter(s => s.kill).length} kill${r.shots.filter(s => s.kill).length > 1 ? 's' : ''}` : ''}${tank ? ` · max ${shells.map(sh => (sh.name ? sh.name + ' ' : '') + sh.max.toLocaleString()).join(' / ')}` : ' · not in tank table'}</span>`}</div>
+        <div class="dmg-cell"><div class="dmg">${max ? max.damage.toLocaleString() : '—'}<span class="dmg-l">max shot${topP ? ` · <span class="pct ${isFull(topP.pct) ? 'full' : ''}" title="${esc(pctTitle(topP))}">${pctLabel(topP)}${top !== max ? ' (#' + (r.shots.indexOf(top) + 1) + ')' : ''}</span>` : ''}</span></div></div>
+        <div class="time">${max ? `<b>${fmtClock(max.clock)}</b><span>timer ${fmtCountdown(max.clock)}</span>` : ''}</div>
+        <div class="caret">▼</div>
+      </summary>${shotsHtml}${actions}</details>`;
+  }).join('');
+}
+// Row actions (status, retry, delete) — delegated so re-rendering doesn't lose handlers.
+$('results').addEventListener('change', e => {
+  const sel = e.target.closest('select[data-act="status"]'); if (!sel) return;
+  const r = findByKey(sel.closest('.actions-row').dataset.key); if (r) setStatus(r, sel.value);
+});
+$('results').addEventListener('click', e => {
+  const b = e.target.closest('button[data-act]'); if (!b) return;
+  const r = findByKey(b.closest('.actions-row').dataset.key); if (!r) return;
+  if (b.dataset.act === 'delete') { if (confirm(`Delete ${r.file} from your library? This also removes the stored replay file.`)) removeReplay(r); }
+  else if (b.dataset.act === 'retry') { const bytes = pendingBytes.get(r.sha256); saveReplay(r, bytes); }
+});
+function findByKey(key) { return replays.find(r => (r.sha256 || r.file) === key); }
+// Keep open/closed state across re-renders.
+const openRows = new Set();
+$('results').addEventListener('toggle', e => { const d = e.target; if (d.matches && d.matches('details.row')) { if (d.open) openRows.add(d.dataset.key); else openRows.delete(d.dataset.key); } }, true);
+function render() { renderList(); for (const d of $('results').querySelectorAll('details.row')) if (openRows.has(d.dataset.key)) d.open = true; }
+
+let ingestNote = '';
+async function ingest(files) {
+  const list = Array.from(files).filter(f => /\.wotbreplay$/i.test(f.name));
+  if (!list.length) { alertBox('None of those files end in .wotbreplay.'); return; }
+  if (usingExamples) { usingExamples = false; replays = []; }
+  drop.classList.add('busy');
+  let added = 0, known = 0, done = 0;
+  const saves = [];
+  for (const f of list) {
+    done++;
+    ingestNote = `Reading ${done} of ${list.length}…`;
+    let r;
+    try {
+      const buf = await f.arrayBuffer();
+      const sha = await sha256Hex(buf);
+      const already = stored.get(sha);
+      if (already) {
+        known++; if (!replays.includes(already)) replays.push(already);
+        // in the library but without its file (e.g. saved before Blob storage existed) — attach it now
+        if (user && blobEnabled && !already.blobUrl && !already.saving) { pendingBytes.set(sha, buf); saves.push(saveReplay(already, buf).then(() => { if (!already.saveError) pendingBytes.delete(sha); })); }
+        render(); continue;
+      }
+      const dup = replays.find(x => x.sha256 === sha);
+      if (dup) { known++; render(); continue; }
+      r = await parseReplay(f.name, buf);
+      r.sha256 = sha; r.fileSize = buf.byteLength; r.saved = false;
+      replays = replays.filter(x => x.file !== r.file || x.saved).concat(r);
+      added++;
+      pendingBytes.set(sha, buf); // kept so a later sign-in or a Retry can still upload the file
+      if (user) saves.push(saveReplay(r, buf).then(() => { if (!r.saveError) pendingBytes.delete(sha); }));
+    } catch (e) {
+      replays = replays.filter(x => x.file !== f.name).concat({ file: f.name, vehicle: 'unreadable', vehicleCode: '', map: '', player: '', duration: 0, shots: [], error: e.message || 'could not read file' });
+    }
+    render();
+  }
+  ingestNote = `${added} new${known ? `, ${known} already in your library` : ''}${user ? '' : ' · sign in to keep them'}`;
+  drop.classList.remove('busy');
+  render();
+  await Promise.allSettled(saves);
+}
+function alertBox(msg) { $('summary').innerHTML = `<span class="err-text">${esc(msg)}</span>`; }
+
+// drag & drop, including dropped folders
+async function collectEntries(items) {
+  const files = [];
+  async function walk(entry) {
+    if (entry.isFile) { await new Promise(res => entry.file(f => { files.push(f); res(); }, res)); }
+    else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      let batch;
+      do { batch = await new Promise(res => reader.readEntries(res, () => res([]))); for (const e of batch) await walk(e); } while (batch.length);
+    }
+  }
+  const entries = Array.from(items).map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.length) return null;
+  for (const e of entries) await walk(e);
+  return files;
+}
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', async e => {
+  const viaEntries = e.dataTransfer.items ? await collectEntries(e.dataTransfer.items) : null;
+  ingest(viaEntries || e.dataTransfer.files);
+});
+drop.addEventListener('click', e => { if (e.target.closest('#pick') || e.target.closest('#pickDir')) return; fileInput.click(); });
+drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+$('pick').addEventListener('click', () => fileInput.click());
+$('pickDir').addEventListener('click', e => { e.preventDefault(); dirInput.click(); });
+fileInput.addEventListener('change', () => { ingest(fileInput.files); fileInput.value = ''; });
+dirInput.addEventListener('change', () => { ingest(dirInput.files); dirInput.value = ''; });
+
+// filters
+[minShot, minTotal, minPct, showSel].forEach(el => el.addEventListener('input', () => { saveFilters(); render(); }));
+$('chips').addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; minShot.value = b.dataset.v; saveFilters(); render(); });
+function saveFilters() { try { localStorage.setItem('blitzclip.filters', JSON.stringify({ ms: minShot.value, mt: minTotal.value, mp: minPct.value, show: showSel.value })); } catch (e) {} }
+(function loadFilters() { try { const f = JSON.parse(localStorage.getItem('blitzclip.filters') || 'null'); if (f) { minShot.value = f.ms; minTotal.value = f.mt; minPct.value = f.mp || 0; showSel.value = f.show; } } catch (e) {} })();
+
+if (typeof DecompressionStream === 'undefined') alertBox('This browser cannot unpack replays (needs DecompressionStream). Use a current Chrome, Edge, Safari or Firefox.');
+render();
+boot();
+</script>
+
+</body>
+</html>
