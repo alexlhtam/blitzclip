@@ -17,6 +17,6 @@ export const POST = route(async (request, user) => {
   if (bytes.readUInt32LE(0) !== 0x04034b50) return error(400, 'Not a .wotbreplay archive');
   const sha = createHash('sha256').update(bytes).digest('hex');
   if (sha !== declared) return error(400, 'File hash mismatch');
-  const blob = await putReplay(replayPathname(user.id, sha), bytes);
+  const blob = await putReplay(replayPathname(user.id, sha), bytes, request);
   return json({ url: blob.url, pathname: blob.pathname, sha256: sha, size: bytes.length }, { status: 201 });
 }, { auth: true });

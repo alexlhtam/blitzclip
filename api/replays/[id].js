@@ -22,6 +22,6 @@ export const PATCH = route(async (request, user) => {
 export const DELETE = route(async (request, user) => {
   const r = await deleteReplay(user.id, idFromUrl(request));
   if (!r) return error(404, 'No such replay');
-  await deleteBlob(r.blob_url);
+  await deleteBlob(r.blob_url, request);
   return json({ ok: true });
 }, { auth: true });
