@@ -11,6 +11,6 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.0",
-    "@vercel/blob": "latest"
+    "@vercel/blob": "2.8.0"
   }
 }

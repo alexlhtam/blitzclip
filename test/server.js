@@ -14,6 +14,8 @@ async function resolveHandler(pathname) {
   const candidates = [join(root, 'api', rel + '.js'), join(root, 'api', rel, 'index.js')];
   const parts = rel.split('/');
   if (parts.length > 1) candidates.push(join(root, 'api', ...parts.slice(0, -1), '[id].js'));
+  const dyn = parts.map(p => /^\d+$/.test(p) ? '[id]' : p);
+  candidates.push(join(root, 'api', ...dyn) + '.js');
   for (const c of candidates) if (existsSync(c)) return import(pathToFileURL(c).href);
   return null;
 }

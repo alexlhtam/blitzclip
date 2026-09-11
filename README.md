@@ -32,6 +32,7 @@ index.html              the page (parser + UI + library sync)
 api/auth/*.js           signup · login · logout · me
 api/replays/index.js    GET list · POST save a parsed summary (idempotent on sha256)
 api/replays/[id].js     GET · PATCH status/note · DELETE (also deletes the stored file)
+api/replays/[id]/file.js  GET the stored .wotbreplay (the store is private; this proxies it)
 api/replays/upload.js   POST raw .wotbreplay through the function (≤ 4 MB)
 api/replays/client-upload.js  Blob client-upload token exchange for bigger files
 api/tanks.js            GET/PUT the per-user tank table
@@ -48,8 +49,11 @@ there is no bundler and no framework.
 
 1. **Postgres** — in the Vercel project, Storage → Create Database → **Neon**. This sets
    `DATABASE_URL` (the code also accepts `POSTGRES_URL`). Tables are created on first request.
-2. **Blob** — Storage → Create → **Blob**. This sets `BLOB_READ_WRITE_TOKEN`. Without it the
-   page still saves parsed results and says so; files are attached later when you re-drop them.
+2. **Blob** — Storage → Create → **Blob** and connect it to the project. Current stores connect
+   with OIDC: the project gets `BLOB_STORE_ID` and each function request carries the token
+   (`@vercel/blob` ≥ 2 understands this; the store is private and files are read back through
+   `/api/replays/:id/file`). Older stores set `BLOB_READ_WRITE_TOKEN`, which also works. Without
+   either, the page still saves parsed results and says so; files are attached when you re-drop.
 3. **`AUTH_SECRET`** — any long random string (e.g. `openssl rand -base64 32`), Production and
    Preview. Sessions are signed with it.
 4. Optional **`SIGNUP_ALLOWLIST`** — comma-separated emails allowed to create accounts. Leave
@@ -89,4 +93,3 @@ on real replays from client 11.20.0:
 
 - Notes on replays, and a queue view sorted by status for the editor.
 - Tier, damage-percentile and 1vN clutch filters (see the build plan in the project notes).
-- Private Blob access (signed URLs) if the library is ever shared beyond the owner.

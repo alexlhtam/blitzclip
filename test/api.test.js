@@ -12,7 +12,7 @@ after(() => server.close());
 // A minimal cookie jar so the tests behave like a browser.
 function client() {
   let cookie = '';
-  return async (path, { method = 'GET', body, headers = {}, raw } = {}) => {
+  const call = async (path, { method = 'GET', body, headers = {}, raw } = {}) => {
     const h = { ...headers, cookie, origin: base };
     let payload = raw;
     if (body !== undefined) { h['content-type'] = 'application/json'; payload = JSON.stringify(body); }
@@ -22,6 +22,8 @@ function client() {
     let data = null; try { data = await res.json(); } catch {}
     return { status: res.status, data };
   };
+  call.cookie = () => cookie;
+  return call;
 }
 
 const parsed = { tankId: 9297, vehicleCode: 'GB48_FV215b_183', vehicle: 'FV215b 183', map: 'rock', player: 'alex', duration: 254.8, error: null,
@@ -77,6 +79,11 @@ test('replays: upload, store, dedupe, list, patch, delete — scoped per user', 
   assert.equal(r.data.replay.max_shot, 1204); assert.equal(r.data.replay.total_damage, 1548); assert.equal(r.data.replay.kills, 1);
   assert.equal(r.data.replay.status, 'new'); assert.equal(r.data.replay.shots.length, 3);
   assert.match(r.data.replay.battle_time, /^2026-09-11T/);
+
+  const dl = await fetch(base + `/api/replays/${id}/file`, { headers: { cookie: a.cookie() } });
+  assert.equal(dl.status, 200); assert.equal(Buffer.from(await dl.arrayBuffer()).equals(file), true, 'download returns the stored bytes');
+  assert.match(dl.headers.get('content-disposition'), /20260911_1225_GB48_FV215b_183.wotbreplay/);
+  assert.equal((await fetch(base + `/api/replays/${id}/file`)).status, 401, 'download needs a session');
 
   r = await a('/api/replays', { method: 'POST', body: { sha256: sha, file_name: 'copy.wotbreplay', file_size: file.length, parsed } });
   assert.equal(r.status, 200); assert.equal(r.data.existing, true); assert.equal(r.data.replay.id, id);

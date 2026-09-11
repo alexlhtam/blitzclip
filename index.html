@@ -862,7 +862,7 @@ function renderList() {
     else if (user && !usingExamples) state = '<span class="badge unsaved">Not saved</span>';
     const actions = (r.saved || r.saveError) && user && !usingExamples ? `<div class="actions-row" data-key="${esc(key)}">
         ${r.saved ? `<label>Status <select data-act="status">${STATUSES.map(s => `<option value="${s}" ${s === r.status ? 'selected' : ''}>${s}</option>`).join('')}</select></label>` : ''}
-        ${r.blobUrl ? `<a href="${esc(r.blobUrl)}" download="${esc(r.file)}">Download replay</a>` : (r.saved ? `<span title="${esc(r.fileError || 'The replay file was not stored, only the parsed result.')}">file not stored</span>` : '')}
+        ${r.blobUrl ? `<a href="/api/replays/${r.id}/file" download="${esc(r.file)}">Download replay</a>` : (r.saved ? `<span title="${esc(r.fileError || 'The replay file was not stored, only the parsed result.')}">file not stored</span>` : '')}
         ${r.saveError ? `<span class="err-text">${esc(r.saveError)}</span> <button class="btn" type="button" data-act="retry">Retry</button>` : ''}
         <span class="spacer"></span>
         ${r.createdAt ? `<span class="when">added ${new Date(r.createdAt).toLocaleDateString()}</span>` : ''}
