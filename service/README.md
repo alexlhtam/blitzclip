@@ -67,3 +67,44 @@ errors are retried with backoff; a bad application id is not.
 `node --test test/fetch-tanks.test.js` exercises the script against a fake of the API, so the
 one thing a real run should confirm is that the shells the API returns are in slot order — check
 one tank you know (the FV215b 183 should read AP / HESH / HE) before trusting the whole file.
+
+## `scrape-wotinspector.js` — source replays from WoTInspector
+
+Walks WoTInspector's public Blitz replay list and keeps the battles worth recording: **max-damage
+rolls** first, then **one-clip 100-to-0 kills**. Hits are downloaded to `out/wotinspector/replays/`
+(drop that folder on the page to review them) and listed, ranked, in `out/wotinspector/candidates.json`.
+
+```
+npm run scrape -- --pages 5                     # newest 5 list pages
+node service/scrape-wotinspector.js --dry-run   # show what would be downloaded, fetch nothing else
+node service/scrape-wotinspector.js --overrides my-tanks.json --min-damage 1500 --filter vehicle_id=9297
+```
+
+It works in two stages so it doesn't over-analyse:
+
+1. **Prefilter on the list summary** (tank, total damage, kills — no download). A **single-shot** gun
+   is only worth a look if the battle's total damage could hold a max roll: at least `--min-damage`
+   (default **1000**) and at least `--min-roll-pct` (default **95 %**) of the gun's smallest shell
+   max roll. A tank that can mount a **clip** gun is also kept when it killed something.
+2. **Analyse the candidates**: fetch the replay's details (the gun actually mounted, every player's
+   tank and entity id) and the `.wotbreplay`, parse it with the page's parser (`lib/replay-parser.js`)
+   and score it with `lib/highlights.js`. A replay is a hit when its best shot is ≥ `--min-roll-pct` of
+   the max roll of the shell it fired, or it has a one-clip 100-to-0.
+
+**Gun type.** `data/tanks.json` (WG's encyclopedia) is trusted: `gun_type` is `autoloader` when the gun's
+`clip_capacity` > 1, with `clip` and `clip_reload`; alternates under `guns` carry the same fields and
+their `gun_id`, so the gun WoTInspector says was mounted is the one scored. The tank's **override wins**
+over both: a `"manual": true` entry in the table, or an entry in `--overrides` (the page's personal
+overrides — "Copy JSON"), that has `gun_type` / `clip`. Overrides are merged onto the shared entry, so
+`{"tank_id": 1121, "gun_type": "autoloader", "clip": 4}` is enough. A tank with no `gun_type` (a table
+built before this field existed) is treated as single-shot until the table is regenerated with `npm run tanks`.
+
+**One-clip 100-to-0.** An enemy that took no damage from anyone before your first hit on it, destroyed by
+you with at most `clip` direct hits, no gap between them as long as a clip reload (`clip_reload`, or
+`--max-gap` seconds, default 8, when unknown), and nobody else damaging it in between (your own fire
+ticks are fine). When the victim's tank HP is known it must have been at full HP when you found it
+(`verified: true`); otherwise the moment is listed as unverified.
+
+Every replay looked at is remembered in `out/wotinspector/seen.json`, so a re-run only fetches the list
+pages. The default pace is one request every 4 s (`--rps 0.25`), `429 Retry-After` is honoured, and
+requests carry a `blitzclip-content-finder` user agent — WoTInspector is a community site, keep it gentle.
