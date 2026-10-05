@@ -7,7 +7,7 @@
   "engines": { "node": "22.x" },
   "scripts": {
     "dev": "BLITZCLIP_FAKE_DB=1 node test/server.js",
-    "test": "BLITZCLIP_FAKE_DB=1 node --test test/api.test.js test/fetch-tanks.test.js",
+    "test": "BLITZCLIP_FAKE_DB=1 node --test test/api.test.js test/fetch-tanks.test.js test/clips.test.js",
     "tanks": "node service/fetch-tanks.js"
   },
   "dependencies": {

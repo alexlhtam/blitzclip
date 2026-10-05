@@ -179,6 +179,15 @@ h1 .sub { color: var(--accent); }
 .pct { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pct.full { color: var(--accent); font-weight: 600; }
 .badge.max { background: var(--accent); color: var(--accent-ink); }
+.badge.clip { background: var(--accent); color: var(--accent-ink); }
+.meta .badge { align-self: flex-start; }
+.badge.nearclip { background: var(--accent-soft); color: var(--accent); }
+.clips { padding: 12px 14px 0; display: flex; flex-direction: column; gap: 10px; }
+.clip-line { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.clip-line b { color: var(--ink); }
+.clip-line .why { display: block; font-size: 12px; color: var(--muted); }
+.shots tr.clipshot td:first-child { box-shadow: inset 3px 0 var(--accent); }
+.shots tr.clipshot.near td:first-child { box-shadow: inset 3px 0 var(--line); }
 .shots td.p { width: 110px; color: var(--ink-2); white-space: nowrap; }
 .shots td.s { width: 70px; color: var(--ink-2); }
 .shots tr.full td.p { color: var(--accent); font-weight: 600; }
@@ -291,8 +300,10 @@ dialog.auth .msg.ok { color: var(--ok); }
       <select id="show">
         <option value="pass">Only replays that pass</option>
         <option value="all">All replays</option>
+        <option value="clip">Only clip kills</option>
+        <option value="clipnear">Clip kills + near misses</option>
       </select>
-      <div class="note">Non-passing replays are dimmed</div>
+      <div class="note">Non-passing replays are dimmed · a clip kill (a full-health tank killed by one magazine) always passes</div>
     </div>
     <div class="field">
       <label for="minPct">Min % of max roll</label>
@@ -337,7 +348,7 @@ dialog.auth .msg.ok { color: var(--ok); }
   <div class="summary" id="summary"></div>
   <div class="results" id="results"></div>
 
-  <p class="foot">Damage is rebuilt from the replay's HP updates, so the total matches the results screen — fire shows as its own row after the shot that lit it. On a <b>killing blow</b> the replay records only the damage applied (the target's remaining HP), so the roll was at least the figure shown (marked ≥). Time is seconds from battle start (the moment the shell landed); the second figure is the in-game countdown at that moment (7:00 clock). <b>% of max</b> compares each shot with the <code>max_roll</code> of the shell it fired, from the table above — a shot at 100% is a true max roll. The shell comes from the replay's hit records; in the rare case it isn't recorded, the shot is scored against the tightest shell it fits and marked with <b>?</b> (hover for every shell's figure). <b>No damage</b> rows are your hits that ricocheted, failed to penetrate, or were absorbed by tracks or modules — shown with the shell's listed alpha rather than a roll.</p>
+  <p class="foot">Damage is rebuilt from the replay's HP updates, so the total matches the results screen — fire shows as its own row after the shot that lit it. On a <b>killing blow</b> the replay records only the damage applied (the target's remaining HP), so the roll was at least the figure shown (marked ≥). Time is seconds from battle start (the moment the shell landed); the second figure is the in-game countdown at that moment (7:00 clock). <b>% of max</b> compares each shot with the <code>max_roll</code> of the shell it fired, from the table above — a shot at 100% is a true max roll. The shell comes from the replay's hit records; in the rare case it isn't recorded, the shot is scored against the tightest shell it fits and marked with <b>?</b> (hover for every shell's figure). A <b>clip kill</b> is a full-health tank taken to zero by one magazine and nothing else: the shells are grouped into magazines by their spacing, the target's full HP is the pool the replay saw before its first hit, and any HP that came off from fire, a team-mate or an earlier hit of your own disqualifies it — those land in <b>near clip</b> instead, with the reason spelled out. <b>No damage</b> rows are your hits that ricocheted, failed to penetrate, or were absorbed by tracks or modules — shown with the shell's listed alpha rather than a roll.</p>
 </div>
 
 <script>
@@ -461,6 +472,16 @@ function findAuthor(shots, hits) {
 // ticks grouped per victim, kills where HP reaches 0, and the author's no-damage hits.
 function shotsFromHp(hpEvents, author, hits) {
   const hp = new Map(), rows = [], unusedHits = hits.filter(h => h.shooter === author);
+  // Every tank's full HP pool, where the replay witnessed its first damage: the HP left after
+  // that first hit plus the hit record's applied damage (any shooter's — all hits are recorded).
+  const pool = new Map(), seen = new Set();
+  for (const e of hpEvents) {
+    if (seen.has(e.victim)) continue;
+    seen.add(e.victim);
+    if (e.dot) continue; // a fire tick first: the shot that lit it happened out of sight
+    const h = hits.find(x => x.victim === e.victim && x.applied && Math.abs(x.clock - e.clock) < 0.5);
+    if (h) pool.set(e.victim, e.hp + h.damage);
+  }
   let fire = null;
   const closeFire = () => { if (fire) { rows.push(fire); fire = null; } };
   for (const e of hpEvents) {
@@ -470,8 +491,8 @@ function shotsFromHp(hpEvents, author, hits) {
       if (prev === undefined) continue;
       const delta = prev - e.hp; if (delta <= 0) continue;
       if (fire && (fire.victim !== e.victim || e.clock - fire.lastClock > 4)) closeFire();
-      if (!fire) fire = { clock: e.clock, lastClock: e.clock, victim: e.victim, damage: 0, ticks: 0, fire: true, kill: false, ammo: null, hitType: null, cumulative: null };
-      fire.damage += delta; fire.ticks += 1; fire.lastClock = e.clock; if (e.hp === 0) fire.kill = true;
+      if (!fire) fire = { clock: e.clock, lastClock: e.clock, victim: e.victim, damage: 0, ticks: 0, fire: true, kill: false, ammo: null, hitType: null, cumulative: null, hp: e.hp, prevHp: prev };
+      fire.damage += delta; fire.ticks += 1; fire.lastClock = e.clock; fire.hp = e.hp; if (e.hp === 0) fire.kill = true;
       continue;
     }
     closeFire();
@@ -480,14 +501,92 @@ function shotsFromHp(hpEvents, author, hits) {
     const h = hi >= 0 ? unusedHits.splice(hi, 1)[0] : null;
     const delta = prev !== undefined ? prev - e.hp : (h ? h.damage : 0);
     if (delta <= 0) continue;
-    rows.push({ clock: e.clock, damage: delta, kill: e.hp === 0, ammo: h ? h.ammo : null, hitType: h ? h.hitType : null, cumulative: null, victim: e.victim });
+    rows.push({ clock: e.clock, damage: delta, kill: e.hp === 0, ammo: h ? h.ammo : null, hitType: h ? h.hitType : null, cumulative: null, victim: e.victim,
+      hp: e.hp, prevHp: prev === undefined ? null : prev, pool: pool.has(e.victim) ? pool.get(e.victim) : null });
   }
   closeFire();
-  for (const h of unusedHits) if (!h.applied) rows.push({ clock: h.clock, damage: 0, roll: h.damage, noDamage: true, cumulative: null, ammo: h.ammo, hitType: h.hitType, kill: false });
+  for (const h of unusedHits) if (!h.applied) rows.push({ clock: h.clock, damage: 0, roll: h.damage, noDamage: true, cumulative: null, ammo: h.ammo, hitType: h.hitType, kill: false, victim: h.victim });
   rows.sort((a, b) => a.clock - b.clock);
   let cum = 0; for (const r of rows) { cum += r.damage; r.cumulative = cum; }
   return rows;
 }
+// ---------- clip kills ----------
+// A clip kill is an autoloader emptying one magazine into a full-health tank and killing it.
+// Everything here is derived from the shot rows alone — each direct hit carries its victim, the
+// victim's HP before and after, and the victim's full pool — so a replay parsed now and a row
+// reloaded from the library are scored identically.
+const CLIP_SHELL_GAP = 4;      // shells of one magazine land within this long of each other
+const CLIP_INTRA_MAX = 3.5;    // ...and a strict clip kill allows no gap longer than this
+const CLIP_RELOAD_MIN = 8;     // a magazine is bracketed by reloads at least this long,
+const CLIP_RELOAD_RATIO = 3;   // and at least this many times its longest internal gap
+const CLIP_SPLASH = 0.25;      // hits this close together are one shell splashing onto two tanks
+const CLIP_NEAR_PCT = 90;      // near miss: the target started at least this healthy
+const CLIP_NEAR_HELP = 0.1;    // near miss: at most this share of the pool came from elsewhere
+
+// The author's shells (damaging hits and bounces, never fire) grouped into magazines by timing.
+function shellBursts(rows) {
+  const shells = [];
+  rows.forEach((r, i) => {
+    if (r.fire) return;
+    const last = shells[shells.length - 1];
+    if (last && r.clock - last.clock <= CLIP_SPLASH) { last.rows.push(r); last.idx.push(i); return; }
+    shells.push({ clock: r.clock, rows: [r], idx: [i] });
+  });
+  shells.sort((a, b) => a.clock - b.clock);
+  const bursts = [];
+  for (const sh of shells) {
+    const b = bursts[bursts.length - 1];
+    const gap = b ? sh.clock - b.end : sh.clock;
+    if (b && gap <= CLIP_SHELL_GAP) { b.shells.push(sh); b.end = sh.clock; b.maxGap = Math.max(b.maxGap, gap); }
+    else { if (b) b.gapAfter = gap; bursts.push({ shells: [sh], end: sh.clock, maxGap: 0, gapBefore: gap, gapAfter: Infinity }); }
+  }
+  return bursts;
+}
+
+// One entry per tank killed inside a magazine. kind: 'clip' = full health to zero on that
+// magazine alone; 'near' = one thing short of it (a chip of outside damage, or the target was
+// already down a little); 'loose' = a kill that happened to land in a burst. Never filters
+// anything out — the reasons say what fell short, so a borderline battle is ranked, not hidden.
+function findClips(rows) {
+  const fires = rows.filter(r => r.fire), out = [];
+  for (const b of shellBursts(rows)) {
+    const reload = Math.min(b.gapBefore, b.gapAfter);
+    const bracketed = reload >= Math.max(CLIP_RELOAD_MIN, CLIP_RELOAD_RATIO * b.maxGap) && b.maxGap <= CLIP_INTRA_MAX;
+    const killed = [];
+    for (const sh of b.shells) for (const r of sh.rows) if (r.kill && r.victim != null && !killed.includes(r.victim)) killed.push(r.victim);
+    for (const victim of killed) {
+      const mine = b.shells.filter(sh => sh.rows.some(r => r.victim === victim));
+      const dmg = mine.map(sh => sh.rows.find(r => r.victim === victim)).filter(r => r.damage > 0);
+      if (!dmg.length) continue;
+      const first = dmg[0], last = dmg[dmg.length - 1];
+      const damage = dmg.reduce((a, r) => a + r.damage, 0);
+      const firstEver = rows.find(r => !r.fire && r.damage > 0 && r.victim === victim);
+      const fullHp = first.pool || (firstEver && firstEver.prevHp === null ? firstEver.hp + firstEver.damage : null);
+      const startHp = first.prevHp === null || first.prevHp === undefined ? first.hp + first.damage : first.prevHp;
+      const startPct = fullHp ? 100 * startHp / fullHp : null;
+      // anything that took HP off this tank between our own shells
+      let outside = 0, ownFire = false;
+      for (let i = 1; i < dmg.length; i++) {
+        const lost = dmg[i].prevHp === null || dmg[i].prevHp === undefined ? 0 : dmg[i - 1].hp - dmg[i].prevHp;
+        if (lost > 0) { outside += lost; if (fires.some(f => f.victim === victim && f.lastClock >= dmg[i - 1].clock && f.clock <= dmg[i].clock)) ownFire = true; }
+      }
+      const shells = mine.length, startedFull = fullHp !== null && startHp >= fullHp, reasons = [];
+      if (shells < 2) reasons.push('one shell, not a magazine');
+      if (!startedFull) reasons.push(fullHp === null ? 'the replay never saw this tank undamaged, so its full HP is unknown' : 'the target started at ' + Math.round(startPct) + '%');
+      if (outside > 0) reasons.push(outside.toLocaleString() + ' HP came off ' + (ownFire ? 'from your fire, not the magazine' : 'from someone else'));
+      if (!bracketed) reasons.push(b.maxGap > CLIP_INTRA_MAX ? 'shells ' + b.maxGap.toFixed(1) + ' s apart — too slow for a magazine' : 'no reload either side, so this may be a single-shot gun firing quickly');
+      const kind = shells >= 2 && startedFull && !outside && bracketed ? 'clip'
+        : shells >= 2 && startPct !== null && startPct >= CLIP_NEAR_PCT && outside <= CLIP_NEAR_HELP * fullHp && b.maxGap <= CLIP_INTRA_MAX ? 'near'
+        : 'loose';
+      out.push({ victim, kind, shells, magazine: b.shells.length, damage, fullHp, startHp, startPct, outside, ownFire, bracketed,
+        intra: b.maxGap, reload: Number.isFinite(reload) ? reload : null, start: first.clock, end: last.clock, duration: last.clock - first.clock,
+        inPoint: Math.max(0, first.clock - 6), alsoKilled: killed.length - 1, reasons,
+        idx: mine.reduce((a, sh) => a.concat(sh.idx), []) });
+    }
+  }
+  return out.sort((a, b) => b.damage - a.damage);
+}
+
 // Fallback when a replay has no HP updates: pair damage deltas with the author's hit records.
 function assignAmmo(shots, hits, hpEvents) {
   const plain = shots.map(s => ({ ...s, ammo: null }));
@@ -502,7 +601,7 @@ function assignAmmo(shots, hits, hpEvents) {
     const [h] = unused.splice(i, 1);
     return { ...s, clock: h.clock, ammo: h.ammo, hitType: h.hitType };
   });
-  for (const h of unused) if (!h.applied) out.push({ clock: h.clock, damage: 0, roll: h.damage, noDamage: true, cumulative: null, ammo: h.ammo, hitType: h.hitType, kill: false });
+  for (const h of unused) if (!h.applied) out.push({ clock: h.clock, damage: 0, roll: h.damage, noDamage: true, cumulative: null, ammo: h.ammo, hitType: h.hitType, kill: false, victim: h.victim });
   return out.sort((a, b) => a.clock - b.clock);
 }
 function prettyVehicle(code) { return code ? code.replace(/^[A-Za-z]{1,3}\d{1,4}_/, '').replace(/_/g, ' ') : ''; }
@@ -844,6 +943,39 @@ function fmtCountdown(s) { const left = Math.max(0, BATTLE_SECS - s); const m = 
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 const minPct = $('minPct');
+// findClips is pure and a little bit of work, so it runs once per parsed shot list; the tank
+// table is applied afterwards, on copies, because it can arrive or change between renders.
+const clipCache = new WeakMap();
+function clipsFor(r) {
+  if (!Array.isArray(r.shots) || !r.shots.length) return [];
+  let c = clipCache.get(r.shots);
+  if (!c) { c = findClips(r.shots); clipCache.set(r.shots, c); }
+  return c;
+}
+// What the table can settle that timing alone cannot: a reconstructed HP pool that matches no
+// tank means the target was probably hit out of sight, and a gun whose own reload is no longer
+// than the gaps between the shells never fired a magazine.
+function confirmClips(clips, tank) {
+  const pools = tanks.some(t => t.hp);
+  return clips.map(c => {
+    const why = [];
+    let kind = c.kind;
+    if (c.fullHp !== null && pools && !tanks.some(t => +t.hp === c.fullHp)) {
+      why.push('a full pool of ' + c.fullHp.toLocaleString() + ' HP matches no tank in the table, so the target may have been hit out of sight');
+      if (kind === 'clip') kind = 'near';
+    }
+    const spec = tank && tank.clip;
+    let unconfirmed = false;
+    if (spec && spec.size && c.magazine > spec.size) {
+      why.push(c.magazine + ' shells is more than ' + tank.name + "'s " + spec.size + '-round magazine');
+      if (kind === 'clip') kind = 'near';
+    } else if (tank && tank.reload && c.intra > 0.6 * tank.reload) {
+      why.push('the gaps are as long as ' + tank.name + "'s own " + Number(tank.reload).toFixed(1) + ' s reload — a single-shot gun, not a magazine');
+      if (kind === 'clip') kind = 'loose';
+    } else if (!spec && !(tank && tank.reload)) unconfirmed = kind === 'clip';
+    return { ...c, kind, unconfirmed, reasons: c.reasons.concat(why) };
+  });
+}
 function evaluate(r) {
   const ms = +minShot.value || 0, mt = +minTotal.value || 0, mp = +minPct.value || 0;
   const damaging = r.shots.filter(s => s.damage > 0 && !s.fire);
@@ -872,7 +1004,12 @@ function evaluate(r) {
   for (const s of damaging) { const p = pctOf(s); if (p && (maxPct === null || p.pct > maxPct)) { maxPct = p.pct; top = s; } }
   let pass = !r.error && !!max && max.damage >= ms && total >= mt;
   if (mp > 0) pass = pass && maxPct !== null && maxPct >= mp;
-  return { max, top, total, pass, ms, mp, tank, shells, pctOf, maxPct };
+  const clips = confirmClips(clipsFor(r), tank);
+  const clipKills = clips.filter(c => c.kind === 'clip');
+  // a clip kill is worth recording whatever the damage thresholds say — three 600s that empty a
+  // full-health tank is the shot the channel wants, and it would never clear a per-shot filter
+  if (clipKills.length) pass = !r.error;
+  return { max, top, total, pass, ms, mp, tank, shells, pctOf, maxPct, clips, clipKills, nearClips: clips.filter(c => c.kind === 'near') };
 }
 const fmtPct = p => p === null ? '' : Math.round(p) + '%';
 const isFull = p => p !== null && p >= 99.5;
@@ -897,27 +1034,43 @@ function renderList() {
   const evald = list.map(r => ({ r, ...evaluate(r) }));
   const passing = evald.filter(e => e.pass).length;
   const errors = evald.filter(e => e.r.error).length;
+  const clipTotal = evald.reduce((a, e) => a + e.clipKills.length, 0), nearTotal = evald.reduce((a, e) => a + e.nearClips.length, 0);
   const s = $('summary');
   const saving = list.filter(r => r.saving).length;
   s.innerHTML = (usingExamples ? '<span class="example-flag">Example rows — drop your own replays to replace them.</span> ' : '') +
     (ingestNote && !usingExamples ? `<span class="progress">${esc(ingestNote)}${saving ? ` · saving ${saving}…` : ''}</span>` : '') +
     `<span><strong>${passing}</strong> of <strong>${list.length}</strong> replays pass</span>` +
+    (clipTotal || nearTotal ? `<span><strong>${clipTotal}</strong> clip kill${clipTotal === 1 ? '' : 's'}${nearTotal ? ` · <strong>${nearTotal}</strong> near` : ''}</span>` : '') +
     (errors ? `<span><strong>${errors}</strong> could not be read</span>` : '') +
     `<span>threshold <strong>${(+minShot.value || 0).toLocaleString()}</strong> dmg per shot${+minTotal.value > 0 ? `, <strong>${(+minTotal.value).toLocaleString()}</strong> total` : ''}${+minPct.value > 0 ? `, <strong>${+minPct.value}%</strong> of max roll` : ''}</span>` +
     (+minPct.value > 0 && evald.some(e => !e.tank && !e.r.error) ? `<span><strong>${evald.filter(e => !e.tank && !e.r.error).length}</strong> not in the tank table (can't pass a % filter)</span>` : '');
 
-  const onlyPass = showSel.value === 'pass';
-  const rows = evald.filter(e => !onlyPass || e.pass || e.r.error)
-    .sort((a, b) => (b.max ? b.max.damage : -1) - (a.max ? a.max.damage : -1));
+  const mode = showSel.value, clipMode = mode === 'clip' || mode === 'clipnear';
+  const clipsOf = e => mode === 'clip' ? e.clipKills : e.clipKills.concat(e.nearClips);
+  const bestClip = e => { const c = clipsOf(e); return c.length ? Math.max(...c.map(x => x.damage)) : -1; };
+  const rows = evald.filter(e => clipMode ? clipsOf(e).length : (mode !== 'pass' || e.pass || e.r.error))
+    .sort((a, b) => clipMode ? bestClip(b) - bestClip(a) : (b.max ? b.max.damage : -1) - (a.max ? a.max.damage : -1));
   const out = $('results');
-  if (!rows.length) { out.innerHTML = `<div class="row" style="padding:18px 16px;color:var(--ink-2)">${list.length ? 'No replay has a shot at or above this threshold. Lower it, or switch to “All replays”.' : 'No replays loaded yet.'}</div>`; return; }
-  out.innerHTML = rows.map(({ r, max, top, total, pass, ms, tank, shells, pctOf, maxPct }) => {
+  if (!rows.length) { out.innerHTML = `<div class="row" style="padding:18px 16px;color:var(--ink-2)">${!list.length ? 'No replays loaded yet.' : clipMode ? 'No ' + (mode === 'clip' ? 'clip kill' : 'clip kill or near miss') + ' in these replays — that is a full-health tank killed by a single magazine.' : 'No replay has a shot at or above this threshold. Lower it, or switch to “All replays”.'}</div>`; return; }
+  out.innerHTML = rows.map(({ r, max, top, total, pass, ms, tank, shells, pctOf, maxPct, clips, clipKills, nearClips }) => {
     const cls = r.error ? 'err' : (pass ? 'hit' : 'miss');
     const topP = top ? pctOf(top) : null;
+    const shownClips = clips.filter(c => c.kind !== 'loose');
+    const clipIdx = new Map(); for (const c of shownClips) for (const i of c.idx) if (!clipIdx.has(i) || c.kind === 'clip') clipIdx.set(i, c.kind);
+    const clipsHtml = shownClips.length ? '<div class="clips">' + shownClips.map(c => {
+      const how = [c.shells + ' shell' + (c.shells === 1 ? '' : 's') + (c.intra ? ' ' + c.intra.toFixed(1) + ' s apart' : '') + (c.reload ? ', ' + Math.round(c.reload) + ' s reload either side' : '')]
+        .concat(c.magazine > c.shells ? [(c.magazine - c.shells) + ' more shell' + (c.magazine - c.shells === 1 ? '' : 's') + ' of the magazine went elsewhere'] : [])
+        .concat(c.alsoKilled ? [c.alsoKilled + ' other tank' + (c.alsoKilled === 1 ? '' : 's') + ' died in the same magazine'] : [])
+        .concat(c.reasons)
+        .concat(c.unconfirmed ? ['timing only — this tank has no reload or clip size in the table yet'] : []);
+      return `<div class="clip-line"><span class="badge ${c.kind === 'clip' ? 'clip' : 'nearclip'}">${c.kind === 'clip' ? 'Clip kill' : 'Near clip'}</span>
+        <b>${c.startHp.toLocaleString()} → 0</b>${c.fullHp ? ` of ${c.fullHp.toLocaleString()} HP` : ''} in <b>${c.duration.toFixed(1)} s</b> · in-point <b>${fmtClock(c.inPoint)}</b> (timer ${fmtCountdown(c.inPoint)})
+        <span class="why">${esc(how.join(' · '))}</span></div>`;
+    }).join('') + '</div>' : '';
     const shotsHtml = r.shots.length ? `<div class="shots"><table><thead><tr><th>#</th><th>Damage</th><th>Shell</th>${tank ? '<th>% of max</th>' : ''}<th>Time</th><th>Timer</th><th>Note</th><th></th></tr></thead><tbody>` +
       r.shots.map((s, i) => { const p = pctOf(s); const full = isFull(p ? p.pct : null); const shellName = s.fire ? 'fire' : Number.isInteger(s.ammo) ? ((shells[s.ammo] && shells[s.ammo].name) || AMMO_SLOT[s.ammo] || 'slot ' + s.ammo) : (s.hitType === 4 && s.damage > 0 ? 'splash' : '—');
         const note = s.noDamage ? `<span class="badge nodmg">No damage</span> <span class="roll">${HIT_TYPE[s.hitType] || 'absorbed'} · shell ${s.roll.toLocaleString()}</span>` : s.fire ? `<span class="badge fire">Fire</span> <span class="roll">${s.ticks} tick${s.ticks > 1 ? 's' : ''}</span> ${s.kill ? '<span class="badge kill">Burned out</span>' : ''}` : `${full ? '<span class="badge max">Max roll</span> ' : ''}${s.kill ? '<span class="badge kill">Killing blow</span>' : ''}`;
-        return `<tr class="${s.damage >= ms && s.damage > 0 && !s.fire ? 'over' : ''} ${s === max ? 'top' : ''} ${s.noDamage ? 'nodmg' : ''} ${s.fire ? 'firerow' : ''} ${s.kill ? 'kill' : ''} ${full ? 'full' : ''}">
+        return `<tr class="${clipIdx.has(i) ? 'clipshot ' + clipIdx.get(i) : ''} ${s.damage >= ms && s.damage > 0 && !s.fire ? 'over' : ''} ${s === max ? 'top' : ''} ${s.noDamage ? 'nodmg' : ''} ${s.fire ? 'firerow' : ''} ${s.kill ? 'kill' : ''} ${full ? 'full' : ''}">
         <td class="n">${i + 1}</td><td class="d">${s.noDamage ? '0' : s.damage.toLocaleString()}</td><td class="s">${esc(shellName)}</td>${tank ? `<td class="p" title="${esc(pctTitle(p))}">${pctLabel(p)}</td>` : ''}<td class="t">${fmtClock(s.clock)}</td><td class="t">${fmtCountdown(s.clock)}</td>
         <td class="k">${note}</td>
         <td>${max && s.damage > 0 ? `<span class="bar" style="width:${Math.round(100 * Math.min(s.damage, max.damage) / max.damage)}px"></span>` : ''}</td></tr>`; }).join('') +
@@ -940,11 +1093,11 @@ function renderList() {
     return `<details class="row ${cls}" data-key="${esc(key)}">
       <summary>
         <div class="cell-tank"><div class="tank">${esc(tank ? tank.name : r.vehicle)}${r.vehicleCode ? `<small>${esc(r.vehicleCode)}${r.tankId ? ' · #' + r.tankId : ''}</small>` : ''}</div><div class="file" title="${esc(r.file)}">${esc(r.file)} ${state}</div></div>
-        <div class="meta">${r.error ? `<span class="err-text">${esc(r.error)}</span>` : `<span>${esc(r.map || '—')}${r.player ? ' · ' + esc(r.player) : ''}</span><span>${r.shots.filter(s => s.damage > 0 && !s.fire).length} damaging hits${r.shots.some(s => s.noDamage) ? ` + ${r.shots.filter(s => s.noDamage).length} no-damage` : ''} · ${total.toLocaleString()} total${r.shots.some(s => s.fire) ? ` (${r.shots.filter(s => s.fire).reduce((a, s) => a + s.damage, 0).toLocaleString()} fire)` : ''}${r.shots.filter(s => s.kill).length ? ` · ${r.shots.filter(s => s.kill).length} kill${r.shots.filter(s => s.kill).length > 1 ? 's' : ''}` : ''}${tank ? ` · max ${shells.map(sh => (sh.name ? sh.name + ' ' : '') + sh.max.toLocaleString()).join(' / ')}` : ' · not in tank table'}</span>`}</div>
+        <div class="meta">${r.error ? `<span class="err-text">${esc(r.error)}</span>` : `${clipKills.length ? `<span class="badge clip">${clipKills.length > 1 ? clipKills.length + ' clip kills' : 'Clip kill'}</span>` : nearClips.length ? '<span class="badge nearclip">Near clip</span>' : ''}<span>${esc(r.map || '—')}${r.player ? ' · ' + esc(r.player) : ''}</span><span>${r.shots.filter(s => s.damage > 0 && !s.fire).length} damaging hits${r.shots.some(s => s.noDamage) ? ` + ${r.shots.filter(s => s.noDamage).length} no-damage` : ''} · ${total.toLocaleString()} total${r.shots.some(s => s.fire) ? ` (${r.shots.filter(s => s.fire).reduce((a, s) => a + s.damage, 0).toLocaleString()} fire)` : ''}${r.shots.filter(s => s.kill).length ? ` · ${r.shots.filter(s => s.kill).length} kill${r.shots.filter(s => s.kill).length > 1 ? 's' : ''}` : ''}${tank ? ` · max ${shells.map(sh => (sh.name ? sh.name + ' ' : '') + sh.max.toLocaleString()).join(' / ')}` : ' · not in tank table'}</span>`}</div>
         <div class="dmg-cell"><div class="dmg">${max ? max.damage.toLocaleString() : '—'}<span class="dmg-l">max shot${topP ? ` · <span class="pct ${isFull(topP.pct) ? 'full' : ''}" title="${esc(pctTitle(topP))}">${pctLabel(topP)}${top !== max ? ' (#' + (r.shots.indexOf(top) + 1) + ')' : ''}</span>` : ''}</span></div></div>
         <div class="time">${max ? `<b>${fmtClock(max.clock)}</b><span>timer ${fmtCountdown(max.clock)}</span>` : ''}</div>
         <div class="caret">▼</div>
-      </summary>${shotsHtml}${actions}</details>`;
+      </summary>${clipsHtml}${shotsHtml}${actions}</details>`;
   }).join('');
 }
 // Row actions (status, retry, delete) — delegated so re-rendering doesn't lose handlers.

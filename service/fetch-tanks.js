@@ -138,6 +138,7 @@ export function toEntry(v, { gunProfile, hp, gunName, stock, guns = [] }) {
     premium: Boolean(v.is_premium || v.is_collectible),
     hp,
     gun: gunName || '',
+    reload: Number(gunProfile.gun?.reload_time) || null,
     max_roll: shellMap(shells, maxRoll),
     alpha,
     note: [Object.values(alpha).join(' / '), gunName, stock ? 'stock' : ''].filter(Boolean).join(' · '),

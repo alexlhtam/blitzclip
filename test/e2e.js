@@ -15,7 +15,7 @@ writeFileSync(f1, makeReplay({ seed: 1 })); writeFileSync(f2, makeReplay({ seed:
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext(); const page = await ctx.newPage();
-const errors = []; page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !/ERR_TUNNEL|fonts\.g/.test(m.text())) errors.push(m.text()); }); // font CDN is blocked in the sandbox
+const errors = []; page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !/ERR_TUNNEL|fonts\.g/.test(m.text()) && !/favicon/.test((m.location() || {}).url || '')) errors.push(m.text() + ' ' + ((m.location() || {}).url || '')); }); // the font CDN is blocked in the sandbox, and the page has no favicon
 const check = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.exitCode = 1; } else console.log('ok -', msg); };
 
 await page.goto(base + '/');
@@ -71,6 +71,27 @@ await page.waitForFunction(() => document.querySelectorAll('.results details.row
 await page.reload();
 await page.waitForFunction(() => document.querySelectorAll('.results details.row').length === 1);
 check(true, 'delete removes the replay from the library');
+
+// clip kill: a magazine that takes a full-health tank from 100 to 0
+const f3 = 'test/tmp/20260911_1400_GB48_FV215b_183.wotbreplay';
+writeFileSync(f3, makeReplay({ scenario: 'clip' }));
+await page.setInputFiles('#fileInput', f3);
+await page.waitForFunction(() => document.querySelectorAll('.results .meta .badge.clip').length === 1);
+check((await page.textContent('#summary')).includes('1 clip kill'), 'clip kill found and counted in the summary');
+await page.fill('#minShot', '5000');
+await page.waitForFunction(() => document.querySelectorAll('.results details.row').length === 1);
+check((await page.textContent('#summary')).includes('1 of 2 replays pass'), 'a clip kill passes on its own, over any damage threshold (its biggest shot is 600)');
+await page.selectOption('#show', 'clip');
+await page.waitForFunction(() => document.querySelectorAll('.results details.row').length === 1);
+const clipLine = (await page.textContent('.clip-line')).replace(/\s+/g, ' ').trim();
+check(/1,600 → 0/.test(clipLine) && /3 shells 2.2 s apart/.test(clipLine) && /in-point 0:54/.test(clipLine), 'clip line: ' + clipLine);
+check(await page.locator('.shots tr.clipshot').count() === 3, 'all three shells of the magazine are marked in the shot table');
+await page.locator('.results details.row summary').first().click();
+await page.waitForSelector('.clips');
+await page.screenshot({ path: 'test/tmp/clip.png', fullPage: true });
+await page.fill('#minShot', '1000');
+await page.selectOption('#show', 'all');
+await page.waitForFunction(() => document.querySelectorAll('.results details.row').length === 2);
 
 // sign out → back to examples; other user sees nothing
 await page.click('#signOut');
