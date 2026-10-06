@@ -22,7 +22,7 @@ const VEHICLES = {
 const M10 = shells(['ARMOR_PIERCING', 700], ['HOLLOW_CHARGE', 700], ['HIGH_EXPLOSIVE', 910]);
 const PROFILES = {
   '9297/1/2': { hp: 2100, gun: { name: '183 mm L4', tier: 10 }, shells: VEHICLES[9297].default_profile.shells },
-  '10497/10/20': { hp: 860, gun: { name: '107 mm ZiS-6', tier: 7 }, shells: VEHICLES[10497].default_profile.shells },
+  '10497/10/20': { hp: 860, gun: { name: '107 mm ZiS-6', tier: 7, clip_capacity: 3, clip_reload_time: 21.5 }, shells: VEHICLES[10497].default_profile.shells },
   '10497/11/21': { hp: 1250, gun: { name: '152 mm M-10', tier: 6 }, shells: M10 },
 };
 
@@ -90,7 +90,10 @@ test('builds the table from the API with top gun and top turret', async () => {
   assert.equal(kv2.premium, false);
   assert.equal(kv2.note, '700 / 700 / 910 · 152 mm M-10');
   assert.equal(kv2.warning, undefined);
-  assert.deepEqual(kv2.guns, [{ name: '107 mm ZiS-6', max_roll: { AP: 375, APCR: 375, HE: 450 }, alpha: { AP: 300, APCR: 300, HE: 360 } }]);
+  assert.equal(kv2.gun_type, 'single');
+  assert.equal(kv2.clip, 1);
+  assert.equal(kv2.gun_id, 11);
+  assert.deepEqual(kv2.guns, [{ name: '107 mm ZiS-6', gun_type: 'autoloader', clip: 3, clip_reload: 21.5, gun_id: 10, max_roll: { AP: 375, APCR: 375, HE: 450 }, alpha: { AP: 300, APCR: 300, HE: 360 } }]);
   assert.equal(tanks.find(t => t.tank_id === 9297).guns, undefined);
 
   const fv = tanks.find(t => t.tank_id === 9297);

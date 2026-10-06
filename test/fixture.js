@@ -22,23 +22,29 @@ function storedZip(entries) {
   return Buffer.concat([...locals, cd, eocd]);
 }
 
-function packet(clock, payload) {
+export function packet(clock, payload) {
   const h = Buffer.alloc(12); h.writeUInt32LE(payload.length, 0); h.writeUInt32LE(8, 4); h.writeFloatLE(clock, 8);
   return Buffer.concat([h, payload]);
 }
 const u32 = v => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
 const u16 = v => { const b = Buffer.alloc(2); b.writeUInt16LE(v); return b; };
 
-const GAME = 1, AUTHOR = 100, VICTIM = 200;
-const sub20 = Buffer.concat([u32(GAME), u32(20), Buffer.alloc(8)]);
-const hp = (clock, victim, hpLeft, attacker, dot) => packet(clock, Buffer.concat([u32(victim), u32(1), Buffer.alloc(4), u16(hpLeft), u32(attacker), Buffer.from([dot ? 1 : 0])]));
-const hit = (clock, shooter, victim, type, shellId, damage, applied) => { const p = Buffer.alloc(33); u32(victim).copy(p, 0); u32(8).copy(p, 4); u32(shooter).copy(p, 12); u32(victim).copy(p, 16); p[21] = type; p[29] = shellId; u16(damage).copy(p, 30); p[32] = applied ? 1 : 0; return packet(clock, p); };
-const ev = (clock, evType, cum) => { const m = Buffer.alloc(6); m[0] = evType; u16(cum).copy(m, 4); return packet(clock, Buffer.concat([u32(GAME), u32(12), Buffer.alloc(4), m])); };
+export const GAME = 1, AUTHOR = 100, VICTIM = 200;
+export const sub20 = Buffer.concat([u32(GAME), u32(20), Buffer.alloc(8)]);
+export const hp = (clock, victim, hpLeft, attacker, dot) => packet(clock, Buffer.concat([u32(victim), u32(1), Buffer.alloc(4), u16(hpLeft), u32(attacker), Buffer.from([dot ? 1 : 0])]));
+export const hit = (clock, shooter, victim, type, shellId, damage, applied) => { const p = Buffer.alloc(33); u32(victim).copy(p, 0); u32(8).copy(p, 4); u32(shooter).copy(p, 12); u32(victim).copy(p, 16); p[21] = type; p[29] = shellId; u16(damage).copy(p, 30); p[32] = applied ? 1 : 0; return packet(clock, p); };
+export const ev = (clock, evType, cum) => { const m = Buffer.alloc(6); m[0] = evType; u16(cum).copy(m, 4); return packet(clock, Buffer.concat([u32(GAME), u32(12), Buffer.alloc(4), m])); };
+
+const HEADER = Buffer.concat([Buffer.alloc(12), Buffer.from([3]), Buffer.from('abc'), Buffer.from([2]), Buffer.from('xy'), Buffer.alloc(1)]);
+
+/** Any replay: meta.json + a packet stream of the given packets (built with hp / hit / ev / sub20 above). */
+export function buildReplay(meta, packets) {
+  return storedZip([['meta.json', Buffer.from(JSON.stringify(meta))], ['data.wotreplay', Buffer.concat([HEADER, ...packets])]]);
+}
 
 export function makeReplay({ seed = 0 } = {}) {
-  const header = Buffer.concat([Buffer.alloc(12), Buffer.from([3]), Buffer.from('abc'), Buffer.from([2]), Buffer.from('xy'), Buffer.alloc(1)]);
   const stream = Buffer.concat([
-    header,
+    HEADER,
     packet(0.5, sub20),
     hp(10, VICTIM, 1800, 0, false),                 // first sighting of the victim's HP
     hit(53.9, AUTHOR, VICTIM, 3, 0x0d, 1204, true),  // HESH (slot 1) pen for 1204

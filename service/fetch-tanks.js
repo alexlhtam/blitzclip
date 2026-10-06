@@ -126,6 +126,20 @@ export function pickTopGun(profiles) {
 }
 const stdAlpha = shells => Number(shells?.[0]?.damage) || 0;
 
+/**
+ * Gun type from the encyclopedia: a gun with clip_capacity > 1 is an autoloader (shots per clip,
+ * seconds to reload the whole clip); anything else fires one shell per reload. The page and
+ * service/scrape-wotinspector.js trust this, with the tank's override (a manual or personal entry
+ * carrying gun_type / clip) winning — see gunFor() in lib/highlights.js.
+ */
+export function gunInfo(p) {
+  const clip = Number(p?.gun?.clip_capacity) || 1;
+  const info = { gun_type: clip > 1 ? 'autoloader' : 'single', clip };
+  if (clip > 1 && Number(p.gun.clip_reload_time) > 0) info.clip_reload = Number(p.gun.clip_reload_time);
+  if (p?.module_id) info.gun_id = p.module_id;
+  return info;
+}
+
 export function toEntry(v, { gunProfile, hp, gunName, stock, guns = [] }) {
   const shells = gunProfile.shells || [];
   const alpha = shellMap(shells);
@@ -138,13 +152,14 @@ export function toEntry(v, { gunProfile, hp, gunName, stock, guns = [] }) {
     premium: Boolean(v.is_premium || v.is_collectible),
     hp,
     gun: gunName || '',
+    ...gunInfo(gunProfile),
     max_roll: shellMap(shells, maxRoll),
     alpha,
     note: [Object.values(alpha).join(' / '), gunName, stock ? 'stock' : ''].filter(Boolean).join(' · '),
   };
   // every other gun the tank can mount, so a shot bigger than the chosen gun's max roll can be re-scored
   const others = guns.filter(g => g !== gunProfile && (g.shells || []).length);
-  if (others.length) entry.guns = others.map(g => ({ name: g.name || g.gun?.name || '', max_roll: shellMap(g.shells, maxRoll), alpha: shellMap(g.shells) }));
+  if (others.length) entry.guns = others.map(g => ({ name: g.name || g.gun?.name || '', ...gunInfo(g), max_roll: shellMap(g.shells, maxRoll), alpha: shellMap(g.shells) }));
   if (!shells.length) entry.warning = 'no shells in the encyclopedia';
   return entry;
 }
@@ -189,7 +204,7 @@ export async function buildTable({ client, stock = false, only = null, language 
         }));
         const ok = fits.filter(Boolean);
         for (const p of ok) hp = Math.max(hp, p.hp || 0);
-        if (ok.length) gunProfiles.push({ ...ok[0], price_xp: g.price_xp || 0, name: g.name });
+        if (ok.length) gunProfiles.push({ ...ok[0], price_xp: g.price_xp || 0, name: g.name, module_id: g.module_id });
         else log(`warning: ${v.name} (${v.tank_id}): gun ${g.name} fits no turret — skipped`);
       }
       if (!gunProfiles.length) gunProfiles.push({ ...dp, price_xp: 0, name: dp.gun?.name });

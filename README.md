@@ -7,7 +7,7 @@ Content-sourcing tools for a World of Tanks **Blitz** YouTube channel. Drop a fo
 
 ## What it does — Shot Finder + library
 
-`index.html` is a single self-contained page. Replays are parsed entirely in the browser.
+`index.html` is a single page; its parser lives in `lib/replay-parser.js`. Replays are parsed entirely in the browser.
 
 - Drag and drop any number of `.wotbreplay` files, or a whole folder.
 - Filters: minimum single-shot damage, minimum total damage, minimum % of the shell's max roll.
@@ -39,6 +39,9 @@ api/replays/upload.js   POST raw .wotbreplay through the function (≤ 4 MB)
 api/replays/client-upload.js  Blob client-upload token exchange for bigger files
 api/tanks.js            GET/PUT the per-user tank table
 service/fetch-tanks.js  offline: build data/tanks.json from the WG Blitz encyclopedia (see service/README.md)
+service/scrape-wotinspector.js  offline: find max rolls and one-clip 100-to-0s on WoTInspector and download them
+lib/replay-parser.js    the .wotbreplay parser — imported by the page and by the services
+lib/highlights.js       gun choice (table + overrides), max-roll scoring, one-clip 100-to-0 detection
 lib/                    db (Neon over HTTP), auth, blob, replay validation + SQL
 schema.sql              applied lazily on first request; every statement is idempotent
 test/                   API tests (node --test), Playwright e2e, synthetic replay fixture
