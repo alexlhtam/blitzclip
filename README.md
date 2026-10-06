@@ -27,6 +27,17 @@ the page, each replay has a status (`new` → `shortlisted` → `recorded` → `
 Accounts are email + password (scrypt hashes; 30-day signed session cookie). Every replay belongs
 to the user who uploaded it — nothing is shared between accounts.
 
+## WoTInspector finds
+
+The panel at the top of the page lists max-damage rolls and one-clip 100-to-0 kills found in
+WoTInspector's public Blitz replays, each linked to its WoTInspector page (download the replay
+there, then drop it on the page to see every shot). A Vercel Cron job checks once a day
+(`vercel.json`, 06:00 UTC); signed-in users can also press **Check for new replays** (at most every
+15 minutes). Each check is limited to about 45 seconds and one request a second, remembers every
+replay it has looked at, and picks up where it stopped next time. Results live in the `wi_*`
+tables. Set **`CRON_SECRET`** in the Vercel project so only Vercel's cron can trigger the daily check.
+The same finder runs from the command line too — see `service/README.md`.
+
 ## Layout
 
 ```
@@ -38,6 +49,9 @@ api/replays/[id]/file.js  GET the stored .wotbreplay (the store is private; this
 api/replays/upload.js   POST raw .wotbreplay through the function (≤ 4 MB)
 api/replays/client-upload.js  Blob client-upload token exchange for bigger files
 api/tanks.js            GET/PUT the per-user tank table
+api/wotinspector/index.js    GET the WoTInspector finds (public)
+api/wotinspector/refresh.js  GET = daily cron · POST = "Check for new replays" (signed in, 15-min cooldown)
+lib/wotinspector-db.js  runs the finder with its state in Postgres, time-boxed for a serverless function
 service/fetch-tanks.js  offline: build data/tanks.json from the WG Blitz encyclopedia (see service/README.md)
 service/scrape-wotinspector.js  offline: find max rolls and one-clip 100-to-0s on WoTInspector and download them
 lib/replay-parser.js    the .wotbreplay parser — imported by the page and by the services
@@ -62,7 +76,9 @@ there is no bundler and no framework.
    either, the page still saves parsed results and says so; files are attached when you re-drop.
 3. **`AUTH_SECRET`** — any long random string (e.g. `openssl rand -base64 32`), Production and
    Preview. Sessions are signed with it.
-4. Optional **`SIGNUP_ALLOWLIST`** — comma-separated emails allowed to create accounts. Leave
+4. **`CRON_SECRET`** — any long random string. Vercel sends it to the daily WoTInspector check, and
+   without it only requests carrying Vercel's cron user agent are accepted.
+5. Optional **`SIGNUP_ALLOWLIST`** — comma-separated emails allowed to create accounts. Leave
    unset while it's just you; set it before sharing the URL.
 
 Then deploy — pushes to `main` deploy production once the repo is connected to the project, or

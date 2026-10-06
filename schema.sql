@@ -36,3 +36,24 @@ CREATE TABLE IF NOT EXISTS replays (
 );
 
 CREATE INDEX IF NOT EXISTS replays_user_created ON replays (user_id, created_at DESC);
+
+-- WoTInspector content finder (lib/wotinspector-db.js): every replay looked at, the hits, and each run.
+CREATE TABLE IF NOT EXISTS wi_seen (
+  id      text PRIMARY KEY,
+  verdict jsonb,
+  seen_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS wi_candidates (
+  id       text PRIMARY KEY,
+  data     jsonb NOT NULL,
+  found_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS wi_runs (
+  id          bigserial PRIMARY KEY,
+  trigger     text NOT NULL,
+  started_at  timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz,
+  stats       jsonb
+);
