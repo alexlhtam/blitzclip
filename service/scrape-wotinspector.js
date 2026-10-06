@@ -171,25 +171,60 @@ export function analyse({ details, tanks, minRollPct = DEFAULTS.minRollPct, maxG
 
 async function readJson(path, fallback) { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return fallback; } }
 
-export async function run({ client, tanks, out, pages = DEFAULTS.pages, startPage = DEFAULTS.startPage, filters = {}, dryRun = false, download = false, log = () => {}, ...opts }) {
+/**
+ * Where a run keeps what it has seen and found. The CLI uses files in --out; the web app uses
+ * Postgres (lib/wotinspector-db.js). A store has:
+ *   seenIds(ids) → Set of the ids already looked at · flush({ seen: {id: verdict}, found: [candidate] })
+ *   all() → every candidate so far
+ */
+export function fileStore(out) {
   const seenPath = join(out, 'seen.json'), candPath = join(out, 'candidates.json');
-  const seen = await readJson(seenPath, {});
-  const candidates = await readJson(candPath, []);
-  const stats = { listed: 0, already: 0, skipped: 0, analysed: 0, hits: 0, errors: 0 };
-  if (!dryRun) await mkdir(download ? join(out, 'replays') : out, { recursive: true });
+  let seen = null, candidates = null;
+  const load = async () => { if (!seen) { seen = await readJson(seenPath, {}); candidates = await readJson(candPath, []); } };
+  return {
+    async seenIds(ids) { await load(); return new Set(ids.filter(id => seen[id])); },
+    async flush({ seen: s, found }) {
+      await load(); Object.assign(seen, s); candidates.push(...found);
+      await mkdir(out, { recursive: true });
+      await writeFile(seenPath, JSON.stringify(seen) + '\n'); await writeFile(candPath, JSON.stringify(rank(candidates), null, 2) + '\n');
+    },
+    async all() { await load(); return rank(candidates); },
+  };
+}
+
+/** In-memory store (tests, one-off runs). */
+export function memStore() {
+  const seen = {}, found = [];
+  return { seen, async seenIds(ids) { return new Set(ids.filter(id => seen[id])); }, async flush(b) { Object.assign(seen, b.seen); found.push(...b.found); }, async all() { return rank(found); } };
+}
+
+/**
+ * Walk list pages, prefilter, score the candidates from their details. `deadline` (epoch ms) stops
+ * the run cleanly before a serverless time limit: no new request starts after it, and what was
+ * found so far is kept. `downloadTo` (a folder) saves hit replays — opt-in, see the header.
+ */
+export async function run({ client, tanks, store, pages = DEFAULTS.pages, startPage = DEFAULTS.startPage, filters = {}, dryRun = false, downloadTo = null, deadline = Infinity, now = Date.now, log = () => {}, ...opts }) {
+  const stats = { listed: 0, already: 0, skipped: 0, analysed: 0, hits: 0, errors: 0, pages: 0, stopped: null };
+  if (downloadTo && !dryRun) await mkdir(downloadTo, { recursive: true });
+  const late = () => now() > deadline;
 
   for (let page = startPage; page < startPage + pages; page++) {
+    if (late()) { stats.stopped = 'time'; break; }
     let body;
     try { body = await client.get(listUrl(page, filters)); }
-    catch (e) { log(`page ${page}: ${e.message} — stopping`); break; }
+    catch (e) { log(`page ${page}: ${e.message} — stopping`); stats.stopped = e.message; break; }
+    stats.pages++;
     const results = (body.results || []).map(r => ({ ...normSummary(r), raw: r })).filter(s => s.id);
     log(`page ${page}: ${results.length} replays`);
+    const already = await store.seenIds(results.map(s => s.id));
+    const seen = {}, found = [];
     for (const s of results) {
       stats.listed++;
-      if (seen[s.id]) { stats.already++; continue; }
+      if (already.has(s.id) || seen[s.id]) { stats.already++; continue; }
       const pre = prefilter(s, tanks, opts);
       if (!pre.keep) { stats.skipped++; seen[s.id] = { skip: pre.skip }; continue; }
       if (dryRun) { log(`  would analyse ${s.id} (${tanks.get(s.tank_id)?.name || '#' + s.tank_id}, ${s.damage} dmg, ${s.kills} kills: ${pre.why.join('+')})`); continue; }
+      if (late()) { stats.stopped = 'time'; continue; } // left unseen, so the next run picks it up; cheap skips still recorded
       try {
         const details = normDetails({ ...s.raw, ...(await client.get(detailsUrl(s.id))) });
         const res = analyse({ details, tanks, ...opts });
@@ -199,24 +234,24 @@ export async function run({ client, tanks, out, pages = DEFAULTS.pages, startPag
           stats.hits++;
           const url = details.download_url || s.download_url;
           let file = null;
-          if (download && url) { // opt-in: robots.txt disallows replays.wotinspector.com/download
+          if (downloadTo && url) { // opt-in: robots.txt disallows replays.wotinspector.com/download
             try {
               const bytes = await client.get(url, 'bytes');
               file = `${s.id}_${(res.tank || 'tank').replace(/[^\w.-]+/g, '_')}.wotbreplay`;
-              await writeFile(join(out, 'replays', file), bytes);
+              await writeFile(join(downloadTo, file), bytes);
             } catch (e) { log(`  ${s.id}: download failed (${e.message})`); }
           }
-          candidates.push({ id: s.id, view_url: details.view_url || s.view_url, download_url: url || null, file, player: s.player, title: s.title, damage: s.damage, kills: s.kills, battle_time: s.battle_time, ...res, found_at: new Date().toISOString() });
+          found.push({ id: s.id, view_url: details.view_url || s.view_url, download_url: url || null, file, player: s.player, title: s.title, damage: s.damage, kills: s.kills, battle_time: s.battle_time, ...res, found_at: new Date().toISOString() });
           log(`  ✓ ${res.tank}: ${res.max_roll ? `max roll ${res.best_roll.damage} (${res.best_roll.pct}%)` : ''}${res.max_roll && res.one_clip.length ? ' + ' : ''}${res.one_clip.length ? `${res.one_clip.length} one-clip kill(s)` : ''}`);
         }
       } catch (e) {
         stats.errors++; seen[s.id] = { error: e.message }; log(`  ${s.id}: ${e.message}`);
       }
     }
-    if (!dryRun) { await writeFile(seenPath, JSON.stringify(seen) + '\n'); await writeFile(candPath, JSON.stringify(rank(candidates), null, 2) + '\n'); }
-    if (!body.next) break;
+    if (!dryRun) await store.flush({ seen, found });
+    if (stats.stopped || !body.next) break;
   }
-  return { stats, candidates: rank(candidates), requests: client.requests };
+  return { stats, candidates: dryRun ? [] : await store.all(), requests: client.requests };
 }
 
 /** Max rolls first (biggest damage, then %), then one-clip kills. */
@@ -254,7 +289,8 @@ async function main() {
   const tanks = buildTankIndex(shared, overrides);
   const log = m => console.error(m);
   const client = makeWiClient({ rps: opts.rps, log });
-  const { stats, candidates, requests } = await run({ client, tanks, out: opts.out, pages: opts.pages, startPage: opts.startPage, filters: opts.filters, dryRun: opts.dryRun, download: opts.download,
+  const { stats, candidates, requests } = await run({ client, tanks, store: fileStore(opts.out), pages: opts.pages, startPage: opts.startPage, filters: opts.filters, dryRun: opts.dryRun,
+    downloadTo: opts.download ? join(opts.out, 'replays') : null,
     minDamage: opts.minDamage, minRollPct: opts.minRollPct, maxGap: opts.maxGap, log });
   console.error(`${stats.listed} listed · ${stats.already} seen before · ${stats.skipped} under threshold · ${stats.analysed} analysed · ${stats.hits} new hits · ${stats.errors} errors · ${requests} requests`);
   if (!opts.dryRun) console.error(`${candidates.length} candidates in ${join(opts.out, 'candidates.json')}${opts.download ? `, replays in ${join(opts.out, 'replays')}/` : ' (open view_url to download a replay, or re-run with --download)'}`);

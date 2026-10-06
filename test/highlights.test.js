@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseReplay } from '../lib/replay-parser.js';
 import { buildTankIndex, gunFor, hasClipGun, bestRoll, oneClipKills, bestRollFromShots, oneClipKillsFromShots, killsFromPlayers, maxRollOf } from '../lib/highlights.js';
-import { prefilter, run, makeWiClient, normSummary, normDetails, listUrl, parseArgs } from '../service/scrape-wotinspector.js';
+import { fileStore, memStore, prefilter, run, makeWiClient, normSummary, normDetails, listUrl, parseArgs } from '../service/scrape-wotinspector.js';
 import { buildReplay, makeReplay, packet, sub20, hp, hit, ev, AUTHOR } from './fixture.js';
 
 // A clip tank (3-shell autoloader on its top gun, single-shot alternate) and the targets it meets.
@@ -194,8 +194,8 @@ test('scraper: lists, prefilters, scores candidates from their details, and reme
   const out = await mkdtemp(join(tmpdir(), 'wi-'));
   const { fetchImpl, seen } = fakeWi();
   const client = makeWiClient({ fetchImpl, rps: 1e6, retryDelay: 1 });
-  const res = await run({ client, tanks, out, pages: 3, minRollPct: 75 }); // the FV's 1204 HESH is 80 % of 1513
-  assert.deepEqual(res.stats, { listed: 3, already: 0, skipped: 1, analysed: 2, hits: 2, errors: 0 });
+  const res = await run({ client, tanks, store: fileStore(out), pages: 3, minRollPct: 75 }); // the FV's 1204 HESH is 80 % of 1513
+  assert.deepEqual(res.stats, { listed: 3, already: 0, skipped: 1, analysed: 2, hits: 2, errors: 0, pages: 1, stopped: null });
   assert.ok(!seen.some(u => u.includes('/c/')), 'the replay under threshold is never fetched');
   assert.ok(!seen.some(u => u.includes('dl.example')), 'nothing is downloaded by default');
   const [b, a] = res.candidates; // max rolls rank first, biggest damage first
@@ -209,17 +209,33 @@ test('scraper: lists, prefilters, scores candidates from their details, and reme
   // second run: nothing is fetched again except the list page
   const again = makeWiClient({ fetchImpl, rps: 1e6, retryDelay: 1 });
   const before = seen.length;
-  const res2 = await run({ client: again, tanks, out, pages: 3 });
+  const res2 = await run({ client: again, tanks, store: fileStore(out), pages: 3 });
   assert.equal(res2.stats.already, 3);
   assert.equal(seen.length - before, 1);
   assert.equal(res2.candidates.length, 2);
 
   // --download also saves each hit's replay
   const out2 = await mkdtemp(join(tmpdir(), 'wi-'));
-  const res3 = await run({ client: makeWiClient({ fetchImpl, rps: 1e6, retryDelay: 1 }), tanks, out: out2, pages: 3, minRollPct: 75, download: true });
+  const res3 = await run({ client: makeWiClient({ fetchImpl, rps: 1e6, retryDelay: 1 }), tanks, store: fileStore(out2), pages: 3, minRollPct: 75, downloadTo: join(out2, 'replays') });
   assert.deepEqual((await readdir(join(out2, 'replays'))).sort(), ['a_Clipper.wotbreplay', 'b_FV215b_183.wotbreplay']);
   assert.deepEqual(res3.candidates.map(c => c.file), ['b_FV215b_183.wotbreplay', 'a_Clipper.wotbreplay']);
 });
+
+test('scraper: a deadline stops before the next request and leaves the rest for the next run', async () => {
+  const { fetchImpl, seen } = fakeWi();
+  const mem = memStore();
+  // the deadline passes after the list page: nothing is analysed, nothing is marked seen but the skip
+  const res = await run({ client: makeWiClient({ fetchImpl: async (u, o) => { const r = await fetchImpl(u, o); if (String(u).includes('page=')) clock.t = 2; return r; }, rps: 1e6, retryDelay: 1 }), tanks, store: mem, pages: 3, minRollPct: 75, deadline: 1, now: () => clock.t });
+  assert.equal(res.stats.stopped, 'time');
+  assert.equal(res.stats.analysed, 0);
+  assert.deepEqual(Object.keys(mem.seen), ['c']);
+  assert.ok(!seen.some(u => /replays\/\w+\/$/.test(u)), 'no details fetched after the deadline');
+  // next run, no deadline: picks up a and b
+  clock.t = 0;
+  const res2 = await run({ client: makeWiClient({ fetchImpl, rps: 1e6, retryDelay: 1 }), tanks, store: mem, pages: 3, minRollPct: 75 });
+  assert.deepEqual([res2.stats.already, res2.stats.analysed, res2.candidates.length], [1, 2, 2]);
+});
+const clock = { t: 0 };
 
 test('normDetails: real nested players, and the short-alias shape as a fallback', () => {
   const real = normDetails({ id: 'x', protagonist: 7, vehicle_id: 9297, vehicle_descr: 9297, download_url: 'https://dl/x', battle: { players_data: [{ dbid: 7, entity_id: 42, vehicle_id: 9297, gun_id: 13908, name: 'me' }] } });

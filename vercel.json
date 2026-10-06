@@ -3,6 +3,25 @@
   "cleanUrls": true,
   "trailingSlash": false,
   "headers": [
-    { "source": "/api/(.*)", "headers": [{ "key": "cache-control", "value": "no-store" }] }
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "cache-control",
+          "value": "no-store"
+        }
+      ]
+    }
+  ],
+  "functions": {
+    "api/wotinspector/refresh.js": {
+      "maxDuration": 60
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/wotinspector/refresh",
+      "schedule": "0 6 * * *"
+    }
   ]
 }
