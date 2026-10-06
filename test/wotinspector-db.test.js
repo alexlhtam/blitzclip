@@ -73,3 +73,13 @@ test('refresh is guarded: cron needs the secret, "Check now" needs sign-in and w
   fakedb._setNow(null);
   assert.equal(later.ran, true);
 });
+
+test('a WoTInspector that never answers still ends the run inside its budget, and the run is recorded', async () => {
+  const hang = (url, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)));
+  const t = Date.now();
+  const res = await refresh({ trigger: 'cron', client: makeWiClient({ fetchImpl: hang, rps: 1e6, retryDelay: 1 }), budgetMs: 300, log: () => {} });
+  assert.ok(Date.now() - t < 2000, 'returned well before a function timeout');
+  assert.equal(res.ran, true);
+  assert.match(res.run.stats.stopped, /no answer|no time left|out of time/);
+  assert.ok((await lastRun()).finished_at);
+});
