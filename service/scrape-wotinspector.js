@@ -1,23 +1,24 @@
 #!/usr/bin/env node
 // Source content from WoTInspector's public Blitz replay list: find max-damage rolls (the priority)
-// and one-clip 100-to-0 kills, and download those replays so they can be dropped into the page.
+// and one-clip 100-to-0 kills, and list them with a link to each replay.
 // The list is api.wotinspector.com/v2/replays/?platform=blitz — without the platform filter it is
 // mostly WoT PC battles.
 //
 //   node service/scrape-wotinspector.js [--pages 5] [--out out/wotinspector] [--overrides my-tanks.json]
 //                                       [--min-damage 1000] [--min-roll-pct 95] [--max-gap 8]
-//                                       [--filter key=value ...] [--rps 0.25] [--dry-run]
+//                                       [--filter key=value ...] [--rps 0.25] [--dry-run] [--download]
 //
 // Two stages, so we don't over-analyse:
 //   1. List pages (one request per 50-ish replays). Each summary has the tank, total damage and
 //      kills. A single-shot tank is kept only if its total damage could contain a max roll: at
 //      least --min-damage AND at least --min-roll-pct of its smallest shell's max roll. A tank
 //      that can mount a clip gun is also kept if it killed anything (a 100-to-0 needs a kill).
-//   2. For each candidate: the replay's details (which gun was mounted, who was in the battle)
-//      and the .wotbreplay itself, parsed with the page's parser (lib/replay-parser.js) and
-//      scored by lib/highlights.js. Hits are saved to <out>/replays/ and listed in
-//      <out>/candidates.json; every replay looked at is remembered in <out>/seen.json so the next
-//      run skips it.
+//   2. For each candidate: the replay's details — which gun was mounted, who was in the battle, who
+//      killed whom, and every shell fired (battle.shots: listed and dealt damage) — scored by the
+//      *FromShots functions in lib/highlights.js. Nothing is downloaded: hits are listed in
+//      <out>/candidates.json with their view_url; --download also saves the .wotbreplay to
+//      <out>/replays/ (opt-in, robots.txt disallows replays.wotinspector.com/download). Every
+//      replay looked at is remembered in <out>/seen.json so the next run skips it.
 //
 // Gun type: data/tanks.json (WG encyclopedia, service/fetch-tanks.js), overridden by its manual
 // entries and by --overrides (the page's personal overrides, "Copy JSON") — see gunFor().
@@ -28,14 +29,13 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parseReplay } from '../lib/replay-parser.js';
-import { buildTankIndex, gunFor, hasClipGun, bestRoll, oneClipKills, ONE_CLIP_DEFAULTS } from '../lib/highlights.js';
+import { buildTankIndex, gunFor, hasClipGun, bestRollFromShots, oneClipKillsFromShots, killsFromPlayers, ONE_CLIP_DEFAULTS } from '../lib/highlights.js';
 
 // The site's own endpoint. The list mixes every game unless asked for Blitz, and robots.txt
 // disallows the older /v2/blitz/replays path, so list and details both go through /v2/replays/.
 export const WI_API = 'https://api.wotinspector.com/v2/replays/';
 export const WI_PLATFORM = 'blitz';
-export const WI_VIEW = 'https://replays.wotinspector.com/en/view/';
+export const WI_VIEW = 'https://replays.wotinspector.com/en/blitz/view/';
 const USER_AGENT = 'blitzclip-content-finder (+https://github.com/alexlhtam/blitzclip)';
 
 export const DEFAULTS = { pages: 5, startPage: 1, minDamage: 1000, minRollPct: 95, maxGap: ONE_CLIP_DEFAULTS.maxGap, rps: 0.25 };
@@ -108,9 +108,12 @@ export function normDetails(d) {
     tank_id: Number(pick(p, 'vehicle_id', 'vehicle_descr', 'vi')) || 0,
     gun_id: Number(pick(p, 'gun_id', 'gi')) || null,
     name: pick(p, 'name', 'n') || '',
+    hp_left: pick(p, 'hitpoints_left') ?? null,
+    killed_by: Number(pick(p, 'killed_by')) || 0, // an entity id
   }));
+  const shots = pick(d?.battle, 'shots') || pick(d, 'shots') || [];
   const protagonist = Number(pick(d, 'protagonist', 'p')) || 0;
-  return { ...normSummary(d), protagonist, players, me: players.find(p => p.dbid === protagonist) || null };
+  return { ...normSummary(d), protagonist, players, shots, duration: Number(pick(d, 'battle_duration')) || 0, me: players.find(p => p.dbid === protagonist) || null };
 }
 
 // ---------- stage 1: prefilter on the list summary ----------
@@ -135,29 +138,32 @@ export function prefilter(summary, tanks, { minDamage = DEFAULTS.minDamage, minR
 
 // ---------- stage 2: analyse one replay ----------
 
-/** Parse the downloaded replay and score it with the gun the details say was mounted. */
-export async function analyse({ bytes, details, tanks, minRollPct = DEFAULTS.minRollPct, maxGap = DEFAULTS.maxGap }) {
-  const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  const parsed = await parseReplay(details.id + '.wotbreplay', buf, { raw: true });
-  const tankId = parsed.tankId || details.tank_id;
+/**
+ * Score a replay from its details alone: WoTInspector's per-shot list (battle.shots) gives every
+ * shell's listed and dealt damage, so nothing is downloaded. The tank table (+ overrides) only
+ * supplies the gun type / clip of the gun the details say was mounted, and victims' full HP.
+ */
+export function analyse({ details, tanks, minRollPct = DEFAULTS.minRollPct, maxGap = DEFAULTS.maxGap }) {
+  const me = details.me;
+  if (!me || !me.entity) throw new Error('uploader not in the player list');
+  const tankId = me.tank_id || details.tank_id;
   const tank = tanks.get(tankId);
-  const gun = gunFor(tank, { gunId: details.me?.gun_id });
-  const roll = gun ? bestRoll(parsed.shots, gun) : null;
-  // victim entity → full HP, from WoTInspector's player list and the tank table
+  const gun = gunFor(tank, { gunId: me.gun_id });
+  const kills = killsFromPlayers(details.players);
+  const roll = bestRollFromShots(details.shots, me.entity, { gun, kills });
   const victimHp = new Map();
   for (const p of details.players) if (p.entity && tanks.get(p.tank_id)?.hp) victimHp.set(p.entity, tanks.get(p.tank_id).hp);
-  const clips = gun ? oneClipKills(parsed.raw, gun, { victimHp, maxGap }) : [];
+  const clips = oneClipKillsFromShots(details.shots, me.entity, gun, { kills, victimHp, maxGap });
   for (const c of clips) { const p = details.players.find(x => x.entity === c.victim); if (p) { c.victim_name = p.name; c.victim_tank = tanks.get(p.tank_id)?.name || `#${p.tank_id}`; } }
   const maxRoll = roll && roll.pct >= minRollPct ? roll : null;
   return {
     hit: !!(maxRoll || clips.length),
-    error: parsed.error,
-    tank: tank?.name || parsed.vehicle, tank_id: tankId,
+    tank: tank?.name || `#${tankId}`, tank_id: tankId,
     gun: gun && { name: gun.name, type: gun.gun_type, clip: Number.isFinite(gun.clip) ? gun.clip : null, source: gun.source },
     best_roll: roll && { ...roll, pct: Math.round(roll.pct * 10) / 10 },
     max_roll: !!maxRoll,
     one_clip: clips,
-    map: parsed.map, duration: parsed.duration,
+    map_id: details.map_id, duration: details.duration,
   };
 }
 
@@ -165,12 +171,12 @@ export async function analyse({ bytes, details, tanks, minRollPct = DEFAULTS.min
 
 async function readJson(path, fallback) { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return fallback; } }
 
-export async function run({ client, tanks, out, pages = DEFAULTS.pages, startPage = DEFAULTS.startPage, filters = {}, dryRun = false, log = () => {}, ...opts }) {
+export async function run({ client, tanks, out, pages = DEFAULTS.pages, startPage = DEFAULTS.startPage, filters = {}, dryRun = false, download = false, log = () => {}, ...opts }) {
   const seenPath = join(out, 'seen.json'), candPath = join(out, 'candidates.json');
   const seen = await readJson(seenPath, {});
   const candidates = await readJson(candPath, []);
   const stats = { listed: 0, already: 0, skipped: 0, analysed: 0, hits: 0, errors: 0 };
-  if (!dryRun) await mkdir(join(out, 'replays'), { recursive: true });
+  if (!dryRun) await mkdir(download ? join(out, 'replays') : out, { recursive: true });
 
   for (let page = startPage; page < startPage + pages; page++) {
     let body;
@@ -186,17 +192,21 @@ export async function run({ client, tanks, out, pages = DEFAULTS.pages, startPag
       if (dryRun) { log(`  would analyse ${s.id} (${tanks.get(s.tank_id)?.name || '#' + s.tank_id}, ${s.damage} dmg, ${s.kills} kills: ${pre.why.join('+')})`); continue; }
       try {
         const details = normDetails({ ...s.raw, ...(await client.get(detailsUrl(s.id))) });
-        const url = details.download_url || s.download_url;
-        if (!url) throw new Error('no download_url');
-        const bytes = await client.get(url, 'bytes');
-        const res = await analyse({ bytes, details, tanks, ...opts });
+        const res = analyse({ details, tanks, ...opts });
         stats.analysed++;
         seen[s.id] = { hit: res.hit };
         if (res.hit) {
           stats.hits++;
-          const file = `${s.id}_${(res.tank || 'tank').replace(/[^\w.-]+/g, '_')}.wotbreplay`;
-          await writeFile(join(out, 'replays', file), bytes);
-          candidates.push({ id: s.id, view_url: s.view_url, download_url: url, file, player: s.player, title: s.title, damage: s.damage, kills: s.kills, battle_time: s.battle_time, ...res, found_at: new Date().toISOString() });
+          const url = details.download_url || s.download_url;
+          let file = null;
+          if (download && url) { // opt-in: robots.txt disallows replays.wotinspector.com/download
+            try {
+              const bytes = await client.get(url, 'bytes');
+              file = `${s.id}_${(res.tank || 'tank').replace(/[^\w.-]+/g, '_')}.wotbreplay`;
+              await writeFile(join(out, 'replays', file), bytes);
+            } catch (e) { log(`  ${s.id}: download failed (${e.message})`); }
+          }
+          candidates.push({ id: s.id, view_url: details.view_url || s.view_url, download_url: url || null, file, player: s.player, title: s.title, damage: s.damage, kills: s.kills, battle_time: s.battle_time, ...res, found_at: new Date().toISOString() });
           log(`  ✓ ${res.tank}: ${res.max_roll ? `max roll ${res.best_roll.damage} (${res.best_roll.pct}%)` : ''}${res.max_roll && res.one_clip.length ? ' + ' : ''}${res.one_clip.length ? `${res.one_clip.length} one-clip kill(s)` : ''}`);
         }
       } catch (e) {
@@ -215,7 +225,7 @@ export const rank = list => [...list].sort((a, b) => (b.max_roll - a.max_roll) |
 // ---------- CLI ----------
 
 export function parseArgs(argv) {
-  const opts = { ...DEFAULTS, out: 'out/wotinspector', tanksPath: 'data/tanks.json', overridesPath: null, filters: {}, dryRun: false };
+  const opts = { ...DEFAULTS, out: 'out/wotinspector', tanksPath: 'data/tanks.json', overridesPath: null, filters: {}, dryRun: false, download: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i], next = () => argv[++i], num = () => { const v = Number(next()); if (!Number.isFinite(v)) throw new Error(`${a} needs a number`); return v; };
     if (a === '--pages') opts.pages = num();
@@ -229,6 +239,7 @@ export function parseArgs(argv) {
     else if (a === '--rps') opts.rps = num();
     else if (a === '--filter') { const [k, ...v] = next().split('='); opts.filters[k] = v.join('='); }
     else if (a === '--dry-run') opts.dryRun = true;
+    else if (a === '--download') opts.download = true;
     else if (a === '--help' || a === '-h') opts.help = true;
     else throw new Error(`Unknown argument ${a}`);
   }
@@ -243,12 +254,12 @@ async function main() {
   const tanks = buildTankIndex(shared, overrides);
   const log = m => console.error(m);
   const client = makeWiClient({ rps: opts.rps, log });
-  const { stats, candidates, requests } = await run({ client, tanks, out: opts.out, pages: opts.pages, startPage: opts.startPage, filters: opts.filters, dryRun: opts.dryRun,
+  const { stats, candidates, requests } = await run({ client, tanks, out: opts.out, pages: opts.pages, startPage: opts.startPage, filters: opts.filters, dryRun: opts.dryRun, download: opts.download,
     minDamage: opts.minDamage, minRollPct: opts.minRollPct, maxGap: opts.maxGap, log });
   console.error(`${stats.listed} listed · ${stats.already} seen before · ${stats.skipped} under threshold · ${stats.analysed} analysed · ${stats.hits} new hits · ${stats.errors} errors · ${requests} requests`);
-  if (!opts.dryRun) console.error(`${candidates.length} candidates in ${join(opts.out, 'candidates.json')}, replays in ${join(opts.out, 'replays')}/`);
+  if (!opts.dryRun) console.error(`${candidates.length} candidates in ${join(opts.out, 'candidates.json')}${opts.download ? `, replays in ${join(opts.out, 'replays')}/` : ' (open view_url to download a replay, or re-run with --download)'}`);
 }
-const USAGE = 'Usage: node service/scrape-wotinspector.js [--pages 5] [--start-page 1] [--out out/wotinspector] [--tanks data/tanks.json] [--overrides my-tanks.json] [--min-damage 1000] [--min-roll-pct 95] [--max-gap 8] [--filter key=value] [--rps 0.25] [--dry-run]';
+const USAGE = 'Usage: node service/scrape-wotinspector.js [--pages 5] [--start-page 1] [--out out/wotinspector] [--tanks data/tanks.json] [--overrides my-tanks.json] [--min-damage 1000] [--min-roll-pct 95] [--max-gap 8] [--filter key=value] [--rps 0.25] [--dry-run] [--download]';
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(e => { console.error(e.message); process.exit(1); });

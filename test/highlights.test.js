@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseReplay } from '../lib/replay-parser.js';
-import { buildTankIndex, gunFor, hasClipGun, bestRoll, oneClipKills } from '../lib/highlights.js';
-import { prefilter, analyse, run, makeWiClient, normSummary, normDetails, listUrl, parseArgs } from '../service/scrape-wotinspector.js';
+import { buildTankIndex, gunFor, hasClipGun, bestRoll, oneClipKills, bestRollFromShots, oneClipKillsFromShots, killsFromPlayers, maxRollOf } from '../lib/highlights.js';
+import { prefilter, run, makeWiClient, normSummary, normDetails, listUrl, parseArgs } from '../service/scrape-wotinspector.js';
 import { buildReplay, makeReplay, packet, sub20, hp, hit, ev, AUTHOR } from './fixture.js';
 
 // A clip tank (3-shell autoloader on its top gun, single-shot alternate) and the targets it meets.
@@ -107,21 +107,68 @@ test('prefilter: single-shot tanks need the damage threshold; clip tanks also pa
 
 // ---------- the scraper end to end, against a fake WoTInspector ----------
 
+// WoTInspector's per-shot list: [time, shooter, target, damage, nominal, ammo_type, premium].
+const shot = ([time, shooter, target, damage, nominal, ammo_type = 0, premium = false]) =>
+  ({ time, shooter, target, damage, nominal_damage: nominal, has_damage: damage > 0, ammo_type, is_premium_ammo: premium, shell_id: 1 });
+const OTHER = 300;
+// The clipper's battle: 200 and 203 are clean one-clips; 201 was chipped first by someone else; 202
+// took four hits (clip 3); 204 had a reload-length gap; 205 was finished by fire (shots don't add up).
+const CLIP_SHOTS = [
+  [10, AUTHOR, 200, 300, 240], [11.5, AUTHOR, 200, 300, 240], [13, AUTHOR, 200, 300, 240],
+  [20, OTHER, 201, 100, 200], [21, AUTHOR, 201, 300, 240], [22, AUTHOR, 201, 300, 240], [23, AUTHOR, 201, 200, 240],
+  [30, AUTHOR, 202, 200, 240], [31, AUTHOR, 202, 200, 240], [32, AUTHOR, 202, 200, 240], [33, AUTHOR, 202, 300, 240],
+  [60, AUTHOR, 203, 350, 300, 3], [61, AUTHOR, 203, 350, 300, 3],
+  [70, AUTHOR, 204, 300, 240], [95, AUTHOR, 204, 300, 240], [96, AUTHOR, 204, 300, 240],
+  [100, AUTHOR, 205, 300, 240], [101, AUTHOR, 205, 300, 240],
+].map(shot);
+const CLIP_PLAYERS = [
+  { dbid: 1, entity_id: AUTHOR, vehicle_id: 5000, gun_id: 77, name: 'alex', hitpoints_left: 400, killed_by: 0 },
+  ...[200, 201, 202, 203, 204, 205].map((e, i) => ({ dbid: 10 + i, entity_id: e, vehicle_id: e === 203 ? 6001 : 6000, gun_id: 1, name: 'enemy' + e, hitpoints_left: 0, killed_by: AUTHOR })),
+];
+// The FV's battle: a 1204 HESH kill shot, a 0-damage event at listed 950 (the kind the replay parser
+// once read as a 1020 hit) and someone else's big hit — only the first may score.
+const FV_SHOTS = [[40, AUTHOR, OTHER, 0, 950], [41, AUTHOR, OTHER, 1204, 1210, 3, true], [42, 400, AUTHOR, 2000, 1000]].map(shot);
+const FV_PLAYERS = [
+  { dbid: 2, entity_id: AUTHOR, vehicle_id: 9297, gun_id: 1, name: 'sam', hitpoints_left: 0, killed_by: 400 },
+  { dbid: 3, entity_id: OTHER, vehicle_id: 6000, gun_id: 1, name: 'victim', hitpoints_left: 0, killed_by: AUTHOR },
+];
+
+test('bestRollFromShots: damage over 1.25 × listed damage, own shells only, kill shots are lower bounds', () => {
+  const players = FV_PLAYERS.map(p => ({ entity: p.entity_id, hp_left: p.hitpoints_left, killed_by: p.killed_by }));
+  const kills = killsFromPlayers(players);
+  const r = bestRollFromShots(FV_SHOTS, AUTHOR, { gun: gunFor(tanks.get(9297)), kills });
+  assert.deepEqual([r.damage, r.max, r.shell, r.premium, r.atLeast, r.over_max], [1204, 1513, 'HE (prem)', true, true, 0]);
+  assert.equal(Math.round(r.pct * 10) / 10, 79.6);
+  assert.equal(bestRollFromShots([shot([1, AUTHOR, 9, 0, 950])], AUTHOR), null); // a 0-damage event never scores
+  assert.deepEqual([bestRollFromShots(CLIP_SHOTS, AUTHOR).shell, bestRollFromShots(CLIP_SHOTS.filter(s => s.ammo_type === 3), AUTHOR).shell], ['AP', 'HE']); // no gun: named by ammo type
+  assert.deepEqual([maxRollOf(1210), maxRollOf(310)], [1513, 388]);
+  // above its max roll isn't a roll: left out and counted
+  const boosted = bestRollFromShots([shot([1, AUTHOR, 9, 465, 260, 2]), shot([2, AUTHOR, 9, 300, 260, 2])], AUTHOR);
+  assert.deepEqual([boosted.damage, boosted.over_max], [300, 1]);
+});
+
+test('oneClipKillsFromShots: whole kill by the shooter, within one clip, no reload gap', () => {
+  const kills = killsFromPlayers(CLIP_PLAYERS.map(p => ({ entity: p.entity_id, hp_left: p.hitpoints_left, killed_by: p.killed_by })));
+  const gun = gunFor(tanks.get(5000));
+  const k = oneClipKillsFromShots(CLIP_SHOTS, AUTHOR, gun, { kills, victimHp: VICTIMS });
+  assert.deepEqual(k.map(x => [x.victim, x.shots, x.damage, x.verified]), [[200, 3, 900, true], [203, 2, 700, true], [205, 2, 600, false]]);
+  assert.deepEqual(oneClipKillsFromShots(CLIP_SHOTS, AUTHOR, { ...gun, clip: 4 }, { kills, victimHp: VICTIMS }).map(x => x.victim), [200, 202, 203, 205]);
+  assert.deepEqual(oneClipKillsFromShots(CLIP_SHOTS, AUTHOR, gun, { victimHp: VICTIMS }), []); // nobody known destroyed
+  assert.deepEqual(oneClipKillsFromShots(CLIP_SHOTS, AUTHOR, gunFor(tanks.get(9297))), []); // single-shot gun
+});
+
 function fakeWi() {
-  const files = { a: clipReplay(), b: makeReplay() };
+  const files = { a: new Uint8Array([1, 2, 3]), b: new Uint8Array([4, 5]) };
   // Shapes as the live API returns them: list items carry vehicle_descr/vehicle_id but no download
-  // link; details nest the players under battle.players_data and carry download_url at the top.
+  // link; details nest players and shots under battle and carry download_url at the top.
   const list = [
     { id: 'a', platform: 'blitz', vehicle_id: 5000, vehicle_descr: 5000, damage_made: 2350, enemies_destroyed: 6, player_name: 'alex' },
     { id: 'b', platform: 'blitz', vehicle_id: 9297, vehicle_descr: 9297, damage_made: 1800, enemies_destroyed: 1, player_name: 'sam' },
     { id: 'c', platform: 'blitz', vehicle_id: 9297, vehicle_descr: 9297, damage_made: 700, enemies_destroyed: 0, player_name: 'kim' },
   ];
   const details = {
-    a: { id: 'a', protagonist: 1, download_url: 'https://dl.example/a', battle: { players_data: [
-      { dbid: 1, entity_id: AUTHOR, vehicle_id: 5000, gun_id: 77, name: 'alex' },
-      ...[...VICTIMS].map(([e, hpFull], i) => ({ dbid: 10 + i, entity_id: e, vehicle_id: hpFull === 700 ? 6001 : 6000, gun_id: 1, name: 'enemy' + e })),
-    ] } },
-    b: { id: 'b', protagonist: 2, download_url: 'https://dl.example/b', battle: { players_data: [{ dbid: 2, entity_id: AUTHOR, vehicle_id: 9297, gun_id: 1, name: 'sam' }] } },
+    a: { id: 'a', protagonist: 1, download_url: 'https://dl.example/a', battle: { players_data: CLIP_PLAYERS, shots: CLIP_SHOTS } },
+    b: { id: 'b', protagonist: 2, download_url: 'https://dl.example/b', battle: { players_data: FV_PLAYERS, shots: FV_SHOTS } },
   };
   const seen = [];
   let throttled = false;
@@ -140,22 +187,24 @@ function fakeWi() {
   return { fetchImpl, seen };
 }
 
-test('scraper: lists, prefilters, downloads candidates, scores them, and remembers what it saw', async () => {
+test('scraper: lists, prefilters, scores candidates from their details, and remembers what it saw', async () => {
   const { mkdtemp, readFile, readdir } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const out = await mkdtemp(join(tmpdir(), 'wi-'));
   const { fetchImpl, seen } = fakeWi();
   const client = makeWiClient({ fetchImpl, rps: 1e6, retryDelay: 1 });
-  const res = await run({ client, tanks, out, pages: 3, minRollPct: 75 }); // the FV's 1204 HESH is 80 % of 1512
+  const res = await run({ client, tanks, out, pages: 3, minRollPct: 75 }); // the FV's 1204 HESH is 80 % of 1513
   assert.deepEqual(res.stats, { listed: 3, already: 0, skipped: 1, analysed: 2, hits: 2, errors: 0 });
-  assert.ok(!seen.some(u => u.includes('/c')), 'the replay under threshold is never fetched');
+  assert.ok(!seen.some(u => u.includes('/c/')), 'the replay under threshold is never fetched');
+  assert.ok(!seen.some(u => u.includes('dl.example')), 'nothing is downloaded by default');
   const [b, a] = res.candidates; // max rolls rank first, biggest damage first
-  assert.equal(b.id, 'b'); assert.equal(b.best_roll.damage, 1204); assert.equal(b.max_roll, true); assert.equal(b.gun.source, 'replay');
-  assert.equal(a.id, 'a'); assert.equal(a.gun.clip, 3);
-  assert.deepEqual(a.one_clip.map(k => [k.victim_name, k.victim_tank, k.verified]), [['enemy200', 'Target', true], ['enemy203', 'Small target', true]]);
-  assert.deepEqual((await readdir(join(out, 'replays'))).sort(), ['a_Clipper.wotbreplay', 'b_FV215b_183.wotbreplay']);
+  assert.equal(b.id, 'b'); assert.equal(b.best_roll.damage, 1204); assert.equal(b.best_roll.atLeast, true); assert.equal(b.max_roll, true);
+  assert.deepEqual([b.gun.name, b.gun.source, b.file, b.download_url], ['183 mm L4', 'replay', null, 'https://dl.example/b']);
+  assert.equal(a.id, 'a'); assert.equal(a.gun.clip, 3); assert.equal(a.gun.name, 'Auto 100');
+  assert.deepEqual(a.one_clip.map(k => [k.victim_name, k.victim_tank, k.verified]), [['enemy200', 'Target', true], ['enemy203', 'Small target', true], ['enemy205', 'Target', false]]);
   assert.deepEqual(Object.keys(JSON.parse(await readFile(join(out, 'seen.json'), 'utf8'))).sort(), ['a', 'b', 'c']);
+  assert.deepEqual(await readdir(out), ['candidates.json', 'seen.json']);
 
   // second run: nothing is fetched again except the list page
   const again = makeWiClient({ fetchImpl, rps: 1e6, retryDelay: 1 });
@@ -164,11 +213,17 @@ test('scraper: lists, prefilters, downloads candidates, scores them, and remembe
   assert.equal(res2.stats.already, 3);
   assert.equal(seen.length - before, 1);
   assert.equal(res2.candidates.length, 2);
+
+  // --download also saves each hit's replay
+  const out2 = await mkdtemp(join(tmpdir(), 'wi-'));
+  const res3 = await run({ client: makeWiClient({ fetchImpl, rps: 1e6, retryDelay: 1 }), tanks, out: out2, pages: 3, minRollPct: 75, download: true });
+  assert.deepEqual((await readdir(join(out2, 'replays'))).sort(), ['a_Clipper.wotbreplay', 'b_FV215b_183.wotbreplay']);
+  assert.deepEqual(res3.candidates.map(c => c.file), ['b_FV215b_183.wotbreplay', 'a_Clipper.wotbreplay']);
 });
 
 test('normDetails: real nested players, and the short-alias shape as a fallback', () => {
   const real = normDetails({ id: 'x', protagonist: 7, vehicle_id: 9297, vehicle_descr: 9297, download_url: 'https://dl/x', battle: { players_data: [{ dbid: 7, entity_id: 42, vehicle_id: 9297, gun_id: 13908, name: 'me' }] } });
-  assert.deepEqual([real.tank_id, real.download_url, real.me], [9297, 'https://dl/x', { dbid: 7, entity: 42, tank_id: 9297, gun_id: 13908, name: 'me' }]);
+  assert.deepEqual([real.tank_id, real.download_url, real.me], [9297, 'https://dl/x', { dbid: 7, entity: 42, tank_id: 9297, gun_id: 13908, name: 'me', hp_left: null, killed_by: 0 }]);
   const short = normDetails({ _id: 'y', p: 1, dlu: 'https://dl/y', d: [{ id: 1, ei: 5, vi: 5000, gi: 77, n: 'a' }] });
   assert.deepEqual([short.id, short.download_url, short.me.entity, short.me.tank_id, short.me.gun_id], ['y', 'https://dl/y', 5, 5000, 77]);
   assert.equal(listUrl(2, { vehicle_id: 9297 }), 'https://api.wotinspector.com/v2/replays/?page=2&platform=blitz&vehicle_id=9297');
