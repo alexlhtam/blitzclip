@@ -256,6 +256,7 @@ dialog.auth .msg.ok { color: var(--ok); }
 .wi-item a:hover { text-decoration: underline; }
 .badge.clip { background: var(--kill); color: #fff; }
 .wi-empty { color: var(--ink-2); padding: 10px 0; }
+.wi-item.miss { opacity: .55; }
 @media (max-width: 560px) { .wi-dmg { font-size: 22px; } }
 </style>
 
@@ -496,22 +497,33 @@ function fmtAgo(t) {
   const m = Math.round((Date.now() - new Date(t).getTime()) / 60000);
   return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago';
 }
+// The page's filters (min shot, min total, min % of max roll, show) apply to the finds too. A one-clip
+// kill is about the clip, not one big shot, so it passes the shot and % filters on its own.
+function wiPasses(c) {
+  const ms = +minShot.value || 0, mt = +minTotal.value || 0, mp = +minPct.value || 0;
+  const r = c.best_roll, clip = c.one_clip && c.one_clip.length;
+  if (mt && (c.damage || 0) < mt) return false;
+  return !!clip || (!!r && r.damage >= ms && (!mp || r.pct >= mp));
+}
 function renderWi() {
-  const { candidates, last, error } = wiState;
+  const { last, error } = wiState;
+  const passing = wiState.candidates.filter(wiPasses), hidden = wiState.candidates.length - passing.length;
+  const candidates = showSel.value === 'all' ? wiState.candidates : passing;
   const rolls = candidates.filter(c => c.max_roll).length, clips = candidates.filter(c => c.one_clip && c.one_clip.length).length;
-  $('wiSub').textContent = error ? error : `${rolls} max roll${rolls === 1 ? '' : 's'} · ${clips} one-clip kill${clips === 1 ? '' : 's'}` + (last ? ` · checked ${fmtAgo(last.finished_at || last.started_at)}` : ' · not checked yet');
+  $('wiSub').textContent = error ? error : `${rolls} max roll${rolls === 1 ? '' : 's'} · ${clips} one-clip kill${clips === 1 ? '' : 's'}` + (hidden ? ` · ${hidden} ${showSel.value === 'all' ? 'dimmed' : 'hidden'} by the filters below` : '') + (last ? ` · checked ${fmtAgo(last.finished_at || last.started_at)}` : ' · not checked yet');
   $('wiRefresh').hidden = !user;
   $('wiRefresh').disabled = wiState.busy;
   $('wiRefresh').textContent = wiState.busy ? 'Checking WoTInspector…' : 'Check for new replays';
   if (wiState.msg) $('wiNote').textContent = wiState.msg;
   const list = $('wiList');
+  if (!candidates.length && hidden) { list.innerHTML = `<li class="wi-empty">No find passes the filters below. Lower them, or switch Show to “All replays”.</li>`; return; }
   if (!candidates.length) { list.innerHTML = `<li class="wi-empty">${error ? '' : last ? 'Nothing found yet — new replays are checked daily.' : 'No check has run yet.' + (user ? ' Use “Check for new replays”.' : ' Sign in to start one.')}</li>`; return; }
   list.innerHTML = candidates.map(c => {
     const r = c.best_roll;
     const kills = (c.one_clip || []).map(k => `<span class="badge clip" title="${esc(`${k.shots} shot${k.shots === 1 ? '' : 's'} in ${k.duration}s, ${k.damage ?? ''} damage${k.verified ? ' (full HP confirmed)' : ' (full HP not confirmed)'}`)}">1-clip 100→0${k.victim_tank ? ' · ' + esc(k.victim_tank) : ''}</span>`).join(' ');
     const roll = r ? `${r.atLeast ? '≥' : ''}${Math.round(r.pct)}% ${esc(r.shell || '')}` : '';
     const when = c.battle_time ? new Date(c.battle_time).toLocaleDateString() : '';
-    return `<li class="wi-item">
+    return `<li class="wi-item${wiPasses(c) ? '' : ' miss'}">
       <div>
         <div class="wi-tank">${esc(c.tank || '')}${c.gun && c.gun.name ? `<small>${esc(c.gun.name)}${c.gun.clip > 1 ? ' · ' + c.gun.clip + '-shell clip' : ''}</small>` : ''}</div>
         <div class="wi-meta">${c.max_roll && r && r.pct >= 99.5 ? '<span class="badge max">Max roll</span> ' : ''}${kills} ${esc(c.player || '')}${c.title ? ' · ' + esc(c.title) : ''} · ${Number(c.damage || 0).toLocaleString()} total${c.kills ? ' · ' + c.kills + ' kill' + (c.kills === 1 ? '' : 's') : ''}${when ? ' · ' + when : ''}</div>
@@ -944,8 +956,8 @@ fileInput.addEventListener('change', () => { ingest(fileInput.files); fileInput.
 dirInput.addEventListener('change', () => { ingest(dirInput.files); dirInput.value = ''; });
 
 // filters
-[minShot, minTotal, minPct, showSel].forEach(el => el.addEventListener('input', () => { saveFilters(); render(); }));
-$('chips').addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; minShot.value = b.dataset.v; saveFilters(); render(); });
+[minShot, minTotal, minPct, showSel].forEach(el => el.addEventListener('input', () => { saveFilters(); render(); renderWi(); }));
+$('chips').addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; minShot.value = b.dataset.v; saveFilters(); render(); renderWi(); });
 function saveFilters() { try { localStorage.setItem('blitzclip.filters', JSON.stringify({ ms: minShot.value, mt: minTotal.value, mp: minPct.value, show: showSel.value })); } catch (e) {} }
 (function loadFilters() { try { const f = JSON.parse(localStorage.getItem('blitzclip.filters') || 'null'); if (f) { minShot.value = f.ms; minTotal.value = f.mt; minPct.value = f.mp || 0; showSel.value = f.show; } } catch (e) {} })();
 
