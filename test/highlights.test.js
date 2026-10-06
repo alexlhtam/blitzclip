@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseReplay } from '../lib/replay-parser.js';
 import { buildTankIndex, gunFor, hasClipGun, bestRoll, oneClipKills } from '../lib/highlights.js';
-import { prefilter, analyse, run, makeWiClient, normSummary, parseArgs } from '../service/scrape-wotinspector.js';
+import { prefilter, analyse, run, makeWiClient, normSummary, normDetails, listUrl, parseArgs } from '../service/scrape-wotinspector.js';
 import { buildReplay, makeReplay, packet, sub20, hp, hit, ev, AUTHOR } from './fixture.js';
 
 // A clip tank (3-shell autoloader on its top gun, single-shot alternate) and the targets it meets.
@@ -109,25 +109,31 @@ test('prefilter: single-shot tanks need the damage threshold; clip tanks also pa
 
 function fakeWi() {
   const files = { a: clipReplay(), b: makeReplay() };
+  // Shapes as the live API returns them: list items carry vehicle_descr/vehicle_id but no download
+  // link; details nest the players under battle.players_data and carry download_url at the top.
   const list = [
-    { id: 'a', vehicle_descr: 5000, damage_made: 2350, enemies_destroyed: 6, player_name: 'alex', download_url: 'https://dl.example/a' },
-    { id: 'b', vehicle_descr: 9297, damage_made: 1800, enemies_destroyed: 1, player_name: 'sam', download_url: 'https://dl.example/b' },
-    { id: 'c', vehicle_descr: 9297, damage_made: 700, enemies_destroyed: 0, player_name: 'kim', download_url: 'https://dl.example/c' },
+    { id: 'a', platform: 'blitz', vehicle_id: 5000, vehicle_descr: 5000, damage_made: 2350, enemies_destroyed: 6, player_name: 'alex' },
+    { id: 'b', platform: 'blitz', vehicle_id: 9297, vehicle_descr: 9297, damage_made: 1800, enemies_destroyed: 1, player_name: 'sam' },
+    { id: 'c', platform: 'blitz', vehicle_id: 9297, vehicle_descr: 9297, damage_made: 700, enemies_destroyed: 0, player_name: 'kim' },
   ];
   const details = {
-    a: { _id: 'a', p: 1, d: [{ id: 1, ei: AUTHOR, vi: 5000, gi: 77, n: 'alex' }, ...[...VICTIMS].map(([e, hpFull], i) => ({ id: 10 + i, ei: e, vi: hpFull === 700 ? 6001 : 6000, n: 'enemy' + e }))] },
-    b: { id: 'b', protagonist: 2, players_data: [{ dbid: 2, entity_id: AUTHOR, vehicle_descr: 9297, gun_id: 1 }] },
+    a: { id: 'a', protagonist: 1, download_url: 'https://dl.example/a', battle: { players_data: [
+      { dbid: 1, entity_id: AUTHOR, vehicle_id: 5000, gun_id: 77, name: 'alex' },
+      ...[...VICTIMS].map(([e, hpFull], i) => ({ dbid: 10 + i, entity_id: e, vehicle_id: hpFull === 700 ? 6001 : 6000, gun_id: 1, name: 'enemy' + e })),
+    ] } },
+    b: { id: 'b', protagonist: 2, download_url: 'https://dl.example/b', battle: { players_data: [{ dbid: 2, entity_id: AUTHOR, vehicle_id: 9297, gun_id: 1, name: 'sam' }] } },
   };
   const seen = [];
   let throttled = false;
   const fetchImpl = async url => {
     url = String(url); seen.push(url);
     const json = (o, status = 200, headers = {}) => new Response(JSON.stringify(o), { status, headers });
-    if (url.includes('page=1')) {
+    if (url.includes('/v2/replays/?') && url.includes('page=1')) {
+      assert.ok(url.includes('platform=blitz'), 'the list asks for Blitz only');
       if (!throttled) { throttled = true; return json({}, 429, { 'retry-after': '0.001' }); }
       return json({ next: null, results: list });
     }
-    const m = url.match(/replays\/(\w+)\/$/); if (m) return json(details[m[1]]);
+    const m = url.match(/\/v2\/replays\/(\w+)\/$/); if (m) return json(details[m[1]]);
     const f = url.match(/dl\.example\/(\w+)/); if (f) return new Response(files[f[1]]);
     return json({}, 404);
   };
@@ -158,6 +164,14 @@ test('scraper: lists, prefilters, downloads candidates, scores them, and remembe
   assert.equal(res2.stats.already, 3);
   assert.equal(seen.length - before, 1);
   assert.equal(res2.candidates.length, 2);
+});
+
+test('normDetails: real nested players, and the short-alias shape as a fallback', () => {
+  const real = normDetails({ id: 'x', protagonist: 7, vehicle_id: 9297, vehicle_descr: 9297, download_url: 'https://dl/x', battle: { players_data: [{ dbid: 7, entity_id: 42, vehicle_id: 9297, gun_id: 13908, name: 'me' }] } });
+  assert.deepEqual([real.tank_id, real.download_url, real.me], [9297, 'https://dl/x', { dbid: 7, entity: 42, tank_id: 9297, gun_id: 13908, name: 'me' }]);
+  const short = normDetails({ _id: 'y', p: 1, dlu: 'https://dl/y', d: [{ id: 1, ei: 5, vi: 5000, gi: 77, n: 'a' }] });
+  assert.deepEqual([short.id, short.download_url, short.me.entity, short.me.tank_id, short.me.gun_id], ['y', 'https://dl/y', 5, 5000, 77]);
+  assert.equal(listUrl(2, { vehicle_id: 9297 }), 'https://api.wotinspector.com/v2/replays/?page=2&platform=blitz&vehicle_id=9297');
 });
 
 test('parseArgs', () => {

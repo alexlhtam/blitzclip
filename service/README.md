@@ -70,8 +70,9 @@ one tank you know (the FV215b 183 should read AP / HESH / HE) before trusting th
 
 ## `scrape-wotinspector.js` — source replays from WoTInspector
 
-Walks WoTInspector's public Blitz replay list and keeps the battles worth recording: **max-damage
-rolls** first, then **one-clip 100-to-0 kills**. Hits are downloaded to `out/wotinspector/replays/`
+Walks WoTInspector's public Blitz replay list (`api.wotinspector.com/v2/replays/?platform=blitz` —
+the same endpoint the site uses; without `platform=blitz` the list is mostly WoT PC battles) and keeps
+the battles worth recording: **max-damage rolls** first, then **one-clip 100-to-0 kills**. Hits are downloaded to `out/wotinspector/replays/`
 (drop that folder on the page to review them) and listed, ranked, in `out/wotinspector/candidates.json`.
 
 ```
@@ -86,8 +87,8 @@ It works in two stages so it doesn't over-analyse:
    is only worth a look if the battle's total damage could hold a max roll: at least `--min-damage`
    (default **1000**) and at least `--min-roll-pct` (default **95 %**) of the gun's smallest shell
    max roll. A tank that can mount a **clip** gun is also kept when it killed something.
-2. **Analyse the candidates**: fetch the replay's details (the gun actually mounted, every player's
-   tank and entity id) and the `.wotbreplay`, parse it with the page's parser (`lib/replay-parser.js`)
+2. **Analyse the candidates**: fetch the replay's details (`/v2/replays/<id>/`: the gun actually
+   mounted and every player's tank and entity id, under `battle.players_data`, plus `download_url`) and the `.wotbreplay`, parse it with the page's parser (`lib/replay-parser.js`)
    and score it with `lib/highlights.js`. A replay is a hit when its best shot is ≥ `--min-roll-pct` of
    the max roll of the shell it fired, or it has a one-clip 100-to-0.
 

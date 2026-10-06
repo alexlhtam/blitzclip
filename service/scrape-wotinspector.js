@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Source content from WoTInspector's public Blitz replay list: find max-damage rolls (the priority)
 // and one-clip 100-to-0 kills, and download those replays so they can be dropped into the page.
+// The list is api.wotinspector.com/v2/replays/?platform=blitz — without the platform filter it is
+// mostly WoT PC battles.
 //
 //   node service/scrape-wotinspector.js [--pages 5] [--out out/wotinspector] [--overrides my-tanks.json]
 //                                       [--min-damage 1000] [--min-roll-pct 95] [--max-gap 8]
@@ -29,7 +31,10 @@ import { pathToFileURL } from 'node:url';
 import { parseReplay } from '../lib/replay-parser.js';
 import { buildTankIndex, gunFor, hasClipGun, bestRoll, oneClipKills, ONE_CLIP_DEFAULTS } from '../lib/highlights.js';
 
-export const WI_API = 'https://api.wotinspector.com/v2/blitz/replays/';
+// The site's own endpoint. The list mixes every game unless asked for Blitz, and robots.txt
+// disallows the older /v2/blitz/replays path, so list and details both go through /v2/replays/.
+export const WI_API = 'https://api.wotinspector.com/v2/replays/';
+export const WI_PLATFORM = 'blitz';
 export const WI_VIEW = 'https://replays.wotinspector.com/en/view/';
 const USER_AGENT = 'blitzclip-content-finder (+https://github.com/alexlhtam/blitzclip)';
 
@@ -62,9 +67,11 @@ export function makeWiClient({ fetchImpl = globalThis.fetch, rps = DEFAULTS.rps,
   return { get, get requests() { return requests; } };
 }
 
+/** One list page, Blitz only; --filter pairs are appended (and may override platform). */
 export function listUrl(page, filters = {}) {
   const u = new URL(WI_API);
   u.searchParams.set('page', String(page));
+  u.searchParams.set('platform', WI_PLATFORM);
   for (const [k, v] of Object.entries(filters)) u.searchParams.set(k, String(v));
   return u.href;
 }
@@ -77,7 +84,7 @@ export function normSummary(s) {
   const id = String(pick(s, 'id', '_id') ?? '');
   return {
     id,
-    tank_id: Number(pick(s, 'vehicle_descr', 'vi')) || 0,
+    tank_id: Number(pick(s, 'vehicle_descr', 'vehicle_id', 'vi')) || 0,
     player: pick(s, 'player_name', 'pn') || '',
     title: pick(s, 'title', 't') || '',
     damage: Number(pick(s, 'damage_made', 'dm')) || 0,
@@ -89,11 +96,16 @@ export function normSummary(s) {
   };
 }
 
+/** Per-replay details URL. */
+export const detailsUrl = id => new URL(encodeURIComponent(id) + '/', WI_API).href;
+
+// Real Blitz details nest the players under `battle` (battle.players_data); each player has
+// dbid, entity_id, vehicle_id, gun_id and name, and `protagonist` (a dbid) sits at the top level.
 export function normDetails(d) {
-  const players = (pick(d, 'players_data', 'd') || []).map(p => ({
+  const players = (pick(d?.battle, 'players_data', 'd') || pick(d, 'players_data', 'd') || []).map(p => ({
     dbid: Number(pick(p, 'dbid', 'id')) || 0,
     entity: Number(pick(p, 'entity_id', 'ei')) || null,
-    tank_id: Number(pick(p, 'vehicle_descr', 'vi')) || 0,
+    tank_id: Number(pick(p, 'vehicle_id', 'vehicle_descr', 'vi')) || 0,
     gun_id: Number(pick(p, 'gun_id', 'gi')) || null,
     name: pick(p, 'name', 'n') || '',
   }));
@@ -173,7 +185,7 @@ export async function run({ client, tanks, out, pages = DEFAULTS.pages, startPag
       if (!pre.keep) { stats.skipped++; seen[s.id] = { skip: pre.skip }; continue; }
       if (dryRun) { log(`  would analyse ${s.id} (${tanks.get(s.tank_id)?.name || '#' + s.tank_id}, ${s.damage} dmg, ${s.kills} kills: ${pre.why.join('+')})`); continue; }
       try {
-        const details = normDetails({ ...s.raw, ...(await client.get(new URL(s.id + '/', WI_API).href)) });
+        const details = normDetails({ ...s.raw, ...(await client.get(detailsUrl(s.id))) });
         const url = details.download_url || s.download_url;
         if (!url) throw new Error('no download_url');
         const bytes = await client.get(url, 'bytes');
