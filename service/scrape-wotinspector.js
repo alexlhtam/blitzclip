@@ -38,7 +38,7 @@ export const WI_PLATFORM = 'blitz';
 export const WI_VIEW = 'https://replays.wotinspector.com/en/blitz/view/';
 const USER_AGENT = 'blitzclip-content-finder (+https://github.com/alexlhtam/blitzclip)';
 
-export const DEFAULTS = { pages: 5, startPage: 1, minDamage: 1000, minRollPct: 95, maxGap: ONE_CLIP_DEFAULTS.maxGap, rps: 0.25 };
+export const DEFAULTS = { pages: 5, startPage: 1, minDamage: 639, minRollPct: 95, maxGap: ONE_CLIP_DEFAULTS.maxGap, rps: 0.25 };
 
 // ---------- WoTInspector client ----------
 
