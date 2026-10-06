@@ -237,6 +237,15 @@ test('scraper: a deadline stops before the next request and leaves the rest for 
 });
 const clock = { t: 0 };
 
+test('client: a request that hangs is cut off, and nothing starts after the deadline', async () => {
+  const hang = (url, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)));
+  const client = makeWiClient({ fetchImpl: hang, rps: 1e6, retryDelay: 1, tries: 1, timeoutMs: 50 });
+  await assert.rejects(client.get('https://wi.example/x'), /no answer within/);
+  await assert.rejects(makeWiClient({ fetchImpl: hang, rps: 1e6, deadline: Date.now() - 1 }).get('https://wi.example/y'), /out of time/);
+  const slow = makeWiClient({ fetchImpl: async () => new Response('{}', { status: 503 }), rps: 1e6, retryDelay: 10_000, deadline: Date.now() + 500 });
+  await assert.rejects(slow.get('https://wi.example/z'), /no time left to retry/);
+});
+
 test('normDetails: real nested players, and the short-alias shape as a fallback', () => {
   const real = normDetails({ id: 'x', protagonist: 7, vehicle_id: 9297, vehicle_descr: 9297, download_url: 'https://dl/x', battle: { players_data: [{ dbid: 7, entity_id: 42, vehicle_id: 9297, gun_id: 13908, name: 'me' }] } });
   assert.deepEqual([real.tank_id, real.download_url, real.me], [9297, 'https://dl/x', { dbid: 7, entity: 42, tank_id: 9297, gun_id: 13908, name: 'me', hp_left: null, killed_by: 0 }]);

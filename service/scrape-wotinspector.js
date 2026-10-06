@@ -42,29 +42,42 @@ export const DEFAULTS = { pages: 5, startPage: 1, minDamage: 639, minRollPct: 95
 
 // ---------- WoTInspector client ----------
 
-/** Paced, retrying GET client. `fetchImpl` is injectable for tests. */
-export function makeWiClient({ fetchImpl = globalThis.fetch, rps = DEFAULTS.rps, retryDelay = 2000, tries = 4, log = () => {}, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
+/**
+ * Paced, retrying GET client. `fetchImpl` is injectable for tests. Each request is cut off after
+ * `timeoutMs`, and nothing (request, pacing wait or retry) runs past `deadline` (epoch ms, settable
+ * later as `client.deadline`): a serverless run must end before its function is killed.
+ */
+export function makeWiClient({ fetchImpl = globalThis.fetch, rps = DEFAULTS.rps, retryDelay = 2000, tries = 4, timeoutMs = 20_000, deadline = Infinity, log = () => {}, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
   const gap = 1000 / rps;
   let next = 0, requests = 0;
+  const client = { get, deadline, get requests() { return requests; } };
+  const outOfTime = url => new Error(`out of time (${url})`);
   async function get(url, as = 'json') {
     for (let attempt = 1; ; attempt++) {
       const wait = next - Date.now();
       next = Math.max(Date.now(), next) + gap;
+      if (Date.now() + Math.max(wait, 0) >= client.deadline) throw outOfTime(url);
       if (wait > 0) await sleep(wait);
       requests++;
+      const limit = Math.min(timeoutMs, client.deadline - Date.now());
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(new Error(`no answer within ${Math.round(limit / 1000)} s`)), Math.max(1, limit));
       let res, err;
-      try { res = await fetchImpl(url, { headers: { 'user-agent': USER_AGENT, accept: as === 'json' ? 'application/json' : '*/*' } }); }
-      catch (e) { err = e; }
-      if (res && res.ok) return as === 'json' ? res.json() : new Uint8Array(await res.arrayBuffer());
+      try {
+        res = await fetchImpl(url, { headers: { 'user-agent': USER_AGENT, accept: as === 'json' ? 'application/json' : '*/*' }, signal: abort.signal });
+        if (res.ok) return as === 'json' ? await res.json() : new Uint8Array(await res.arrayBuffer());
+      } catch (e) { err = abort.signal.aborted ? abort.signal.reason : e; }
+      finally { clearTimeout(timer); }
       const transient = err || res.status === 429 || res.status >= 500;
       if (!transient || attempt >= tries) throw new Error(err ? `${err.message} (${url})` : `HTTP ${res.status} from ${url}`);
       const retryAfter = res && Number(res.headers.get('retry-after'));
       const delay = retryAfter > 0 ? retryAfter * 1000 : retryDelay * 2 ** attempt;
+      if (Date.now() + delay >= client.deadline) throw new Error(`${err ? err.message : 'HTTP ' + res.status} and no time left to retry (${url})`);
       log(`  retry ${attempt}/${tries - 1} in ${Math.round(delay / 1000)} s: ${err ? err.message : 'HTTP ' + res.status}`);
       await sleep(delay);
     }
   }
-  return { get, get requests() { return requests; } };
+  return client;
 }
 
 /** One list page, Blitz only; --filter pairs are appended (and may override platform). */
@@ -245,7 +258,9 @@ export async function run({ client, tanks, store, pages = DEFAULTS.pages, startP
           log(`  ✓ ${res.tank}: ${res.max_roll ? `max roll ${res.best_roll.damage} (${res.best_roll.pct}%)` : ''}${res.max_roll && res.one_clip.length ? ' + ' : ''}${res.one_clip.length ? `${res.one_clip.length} one-clip kill(s)` : ''}`);
         }
       } catch (e) {
-        stats.errors++; seen[s.id] = { error: e.message }; log(`  ${s.id}: ${e.message}`);
+        // Not marked seen: a timeout or a WoTInspector hiccup shouldn't lose the replay for good.
+        if (late() || /out of time|no time left/.test(e.message)) { stats.stopped = 'time'; continue; }
+        stats.errors++; log(`  ${s.id}: ${e.message}`);
       }
     }
     if (!dryRun) await store.flush({ seen, found });
