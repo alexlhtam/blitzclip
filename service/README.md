@@ -10,7 +10,7 @@ browser and account uses; users layer personal overrides on top of it in the pag
 
 ```
 WG_APPLICATION_ID=xxxxxxxx node service/fetch-tanks.js            # → data/tanks.json + data/tanks.meta.json
-npm run tanks                                                      # same thing
+npm run tanks                                                      # same thing, reads WG_APPLICATION_ID from .env
 node service/fetch-tanks.js --tank 9297,14129 --out /tmp/two.json  # quick smoke test
 node service/fetch-tanks.js --stock                                # encyclopedia defaults only, ~10 requests
 node service/fetch-tanks.js --region na                            # eu (default) · na · asia

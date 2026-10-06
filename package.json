@@ -8,8 +8,8 @@
   "scripts": {
     "dev": "BLITZCLIP_FAKE_DB=1 node test/server.js",
     "test": "BLITZCLIP_FAKE_DB=1 node --test test/api.test.js test/fetch-tanks.test.js test/highlights.test.js",
-    "tanks": "node service/fetch-tanks.js",
-    "scrape": "node service/scrape-wotinspector.js"
+    "tanks": "node --env-file-if-exists=.env service/fetch-tanks.js",
+    "scrape": "node --env-file-if-exists=.env service/scrape-wotinspector.js"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.0",
